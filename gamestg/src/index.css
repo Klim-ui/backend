@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-background text-white font-sans;
+  }
+}
+
+@layer components {
+  .neon-text {
+    @apply text-primary;
+    text-shadow: 0 0 5px theme('colors.primary.DEFAULT'), 0 0 10px theme('colors.primary.DEFAULT');
+  }
+  
+  .neon-text-magenta {
+    @apply text-secondary;
+    text-shadow: 0 0 5px theme('colors.secondary.DEFAULT'), 0 0 10px theme('colors.secondary.DEFAULT');
+  }
+  
+  .neon-text-yellow {
+    @apply text-accent;
+    text-shadow: 0 0 5px theme('colors.accent.DEFAULT'), 0 0 10px theme('colors.accent.DEFAULT');
+  }
+  
+  .neon-border {
+    @apply border border-primary;
+    box-shadow: 0 0 5px theme('colors.primary.DEFAULT'), 0 0 10px theme('colors.primary.DEFAULT');
+  }
+  
+  .tech-panel {
+    @apply bg-surface rounded p-4 border border-primary/30;
+  }
+  
+  .cyber-btn {
+    @apply px-4 py-2 bg-surface border border-primary text-primary font-mono uppercase
+    tracking-wider relative overflow-hidden transition-all duration-300
+    hover:bg-primary hover:text-background hover:shadow-neon;
+  }
+  
+  .cyber-btn-secondary {
+    @apply border-secondary text-secondary
+    hover:bg-secondary hover:text-background hover:shadow-neon-magenta;
+  }
+  
+  .glitch-effect {
+    @apply relative;
+  }
+  
+  .glitch-effect::before,
+  .glitch-effect::after {
+    @apply content-[''] absolute top-0 left-0 w-full h-full opacity-30;
+    clip: rect(0, 0, 0, 0);
+  }
+  
+  .glitch-effect::before {
+    @apply text-primary -left-1;
+    animation: glitch 2s infinite linear alternate-reverse;
+  }
+  
+  .glitch-effect::after {
+    @apply text-secondary left-1;
+    animation: glitch 3s infinite linear alternate-reverse;
+  }
+  
+  .scanline {
+    @apply absolute top-0 left-0 w-full h-[2px] bg-primary/30 z-50 pointer-events-none;
+    animation: scanline 6s linear infinite;
+  }
+} 
