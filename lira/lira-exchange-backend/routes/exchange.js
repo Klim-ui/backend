@@ -4,8 +4,9 @@ const Exchange = require('../models/Exchange');
 const Rate = require('../models/Rate');
 const Wallet = require('../models/Wallet');
 const User = require('../models/User');
-const { TonClient } = require('ton');
-const { mnemonicToPrivateKey } = require('ton-crypto');
+// Временно отключаем TON-функциональность
+// const { TonClient } = require('ton');
+// const { mnemonicToPrivateKey } = require('ton-crypto');
 
 // Middleware for checking authentication (to be implemented)
 const { protect, admin } = require('../middleware/auth');
@@ -317,6 +318,15 @@ router.post('/calculate', async (req, res) => {
       message: 'Server error when calculating exchange'
     });
   }
+});
+
+// Простой тестовый эндпоинт
+router.get('/ping', (req, res) => {
+  return res.status(200).json({
+    message: 'Exchange API работает',
+    success: true,
+    timestamp: new Date().toISOString()
+  });
 });
 
 module.exports = router; 
