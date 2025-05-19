@@ -7,7 +7,9 @@ const { protect, admin } = require('../middleware/auth');
 
 // Generate JWT Token
 const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, {
+  const secret = process.env.JWT_SECRET || 'DEFAULT_JWT_SECRET_FOR_DEVELOPMENT_ONLY';
+  console.log('Using JWT secret:', secret ? 'Secret configured' : 'MISSING JWT SECRET!');
+  return jwt.sign({ id }, secret, {
     expiresIn: process.env.JWT_EXPIRE || '30d',
   });
 };
@@ -25,6 +27,15 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'User already exists',
+      });
+    }
+
+    // Проверка наличия всех обязательных полей
+    if (!email || !password || !firstName || !lastName || !phoneNumber) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide all required fields: email, password, firstName, lastName, phoneNumber',
+        fields: { email: !!email, password: !!password, firstName: !!firstName, lastName: !!lastName, phoneNumber: !!phoneNumber }
       });
     }
 
@@ -61,10 +72,21 @@ router.post('/register', async (req, res) => {
       });
     }
   } catch (error) {
+    console.error('Register error:', error);
     req.logger?.error(`Register error: ${error.message}`);
+    
+    // Более информативный ответ об ошибке
+    let errorMessage = 'Server error';
+    if (error.name === 'ValidationError') {
+      errorMessage = Object.values(error.errors).map(val => val.message).join(', ');
+    } else if (error.code === 11000) {
+      errorMessage = 'Email already exists';
+    }
+    
     res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: errorMessage,
+      error: error.message
     });
   }
 });
