@@ -127,32 +127,42 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // Check if password matches
-    const isMatch = await user.matchPassword(password);
-    if (!isMatch) {
-      return res.status(401).json({
+    // Check if password matches using Promise API
+    try {
+      const isMatch = await user.matchPassword(password);
+      if (!isMatch) {
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid credentials',
+        });
+      }
+
+      // Generate token
+      const token = generateToken(user._id);
+
+      res.json({
+        success: true,
+        token,
+        user: {
+          _id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          phoneNumber: user.phoneNumber,
+          role: user.role,
+          kycVerified: user.kycVerified,
+        },
+      });
+    } catch (passwordError) {
+      console.error('Password comparison error:', passwordError);
+      req.logger?.error(`Password comparison error: ${passwordError.message}`);
+      res.status(500).json({
         success: false,
-        message: 'Invalid credentials',
+        message: 'Error during authentication'
       });
     }
-
-    // Generate token
-    const token = generateToken(user._id);
-
-    res.json({
-      success: true,
-      token,
-      user: {
-        _id: user._id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        phoneNumber: user.phoneNumber,
-        role: user.role,
-        kycVerified: user.kycVerified,
-      },
-    });
   } catch (error) {
+    console.error('Login error:', error);
     req.logger?.error(`Login error: ${error.message}`);
     res.status(500).json({
       success: false,

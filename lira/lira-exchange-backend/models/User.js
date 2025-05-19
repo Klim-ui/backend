@@ -68,20 +68,46 @@ const UserSchema = new mongoose.Schema({
 });
 
 // Encrypt password before saving
-UserSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) {
-    next();
-    return;
+UserSchema.pre('save', function(next) {
+  const user = this;
+  
+  // Only hash the password if it has been modified (or is new)
+  if (!user.isModified('password')) {
+    return next();
   }
   
-  const salt = await bcrypt.genSalt(10);
-  this.password = await bcrypt.hash(this.password, salt);
-  next();
+  // Generate a salt
+  bcrypt.genSalt(10, function(err, salt) {
+    if (err) return next(err);
+    
+    // Hash the password using our new salt
+    bcrypt.hash(user.password, salt, function(err, hash) {
+      if (err) return next(err);
+      
+      // Override the cleartext password with the hashed one
+      user.password = hash;
+      next();
+    });
+  });
 });
 
 // Match user entered password to hashed password in database
-UserSchema.methods.matchPassword = async function (enteredPassword) {
-  return await bcrypt.compare(enteredPassword, this.password);
+UserSchema.methods.matchPassword = function(enteredPassword, cb) {
+  // Поддержка как callback, так и Promise API
+  if (cb) {
+    bcrypt.compare(enteredPassword, this.password, function(err, isMatch) {
+      if (err) return cb(err);
+      cb(null, isMatch);
+    });
+  } else {
+    // Возвращаем Promise для обратной совместимости
+    return new Promise((resolve, reject) => {
+      bcrypt.compare(enteredPassword, this.password, function(err, isMatch) {
+        if (err) return reject(err);
+        resolve(isMatch);
+      });
+    });
+  }
 };
 
 module.exports = mongoose.model('User', UserSchema); 
