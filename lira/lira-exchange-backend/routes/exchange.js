@@ -4,9 +4,11 @@ const Exchange = require('../models/Exchange');
 const Rate = require('../models/Rate');
 const Wallet = require('../models/Wallet');
 const User = require('../models/User');
-// Временно отключаем TON-функциональность
-// const { TonClient } = require('ton');
-// const { mnemonicToPrivateKey } = require('ton-crypto');
+// Раскомментируем TON-функциональность
+const { TonClient } = require('@ton/ton');
+const { mnemonicToPrivateKey } = require('@ton/crypto');
+// Импортируем наши TON утилиты
+const { generateTonWallet, checkTonBalance, getTonTransactions } = require('../utils/tonUtils');
 
 // Middleware for checking authentication (to be implemented)
 const { protect, admin } = require('../middleware/auth');
@@ -39,13 +41,21 @@ router.get('/rates', async (req, res) => {
 // Start a new exchange (user must be authenticated)
 router.post('/start', protect, async (req, res) => {
   try {
-    const { fromCurrency, toCurrency, fromAmount } = req.body;
+    const { fromCurrency, toCurrency, fromAmount, bankDetails } = req.body;
     
     // Validate request
     if (!fromCurrency || !toCurrency || !fromAmount) {
       return res.status(400).json({
         success: false,
         message: 'Please provide fromCurrency, toCurrency and fromAmount'
+      });
+    }
+    
+    // Если обмен на RUB, требуем банковские реквизиты
+    if (toCurrency === 'RUB' && !bankDetails) {
+      return res.status(400).json({
+        success: false,
+        message: 'Bank account details are required for RUB exchanges'
       });
     }
     
@@ -83,7 +93,7 @@ router.post('/start', protect, async (req, res) => {
     const finalAmount = toAmount - feeAmount;
     
     // Create exchange record
-    const exchange = await Exchange.create({
+    const exchange = new Exchange({
       user: req.user.id,
       fromCurrency,
       toCurrency,
@@ -95,28 +105,81 @@ router.post('/start', protect, async (req, res) => {
       status: 'initiated'
     });
     
-    // If crypto exchange is involved, create or assign a wallet
+    // Добавляем банковские реквизиты, если они предоставлены
+    if (bankDetails) {
+      exchange.bankAccount = {
+        accountId: bankDetails.accountId,
+        bank: bankDetails.bank,
+        country: toCurrency === 'RUB' ? 'RU' : 'TR'
+      };
+    }
+    
+    // Если обмен через TON
     if (fromCurrency === 'TON' || toCurrency === 'TON') {
-      // Check if user already has a TON wallet
-      let wallet = await Wallet.findOne({
+      let wallet;
+      
+      // Проверяем, есть ли у пользователя уже TON кошелек
+      wallet = await Wallet.findOne({
         user: req.user.id,
         walletType: 'TON',
         isActive: true
       });
       
-      // If no wallet, create one (simplified; actual implementation would need TON wallet creation logic)
+      // Если кошелька нет, создаем новый
       if (!wallet) {
-        wallet = await Wallet.create({
+        // Генерируем новый TON кошелек
+        const tonWallet = await generateTonWallet();
+        
+        // Создаем новый кошелек в базе данных
+        wallet = new Wallet({
           user: req.user.id,
           walletType: 'TON',
-          address: 'TEMPORARY_ADDRESS_' + Date.now(), // Placeholder
-          isActive: true
+          address: tonWallet.address,
+          publicKey: tonWallet.publicKey,
+          balance: 0,
+          isActive: true,
+          isHot: true
         });
+        
+        // Шифруем мнемонику
+        wallet.tonMnemonic = wallet.encryptMnemonic(tonWallet.mnemonic);
+        
+        // Генерируем QR-код
+        wallet.qrCodeUrl = wallet.generateQrCode();
+        
+        await wallet.save();
       }
       
-      // Assign wallet to exchange
+      // Привязываем кошелек к обмену
       exchange.cryptoWallet = wallet._id;
-      await exchange.save();
+      
+      // Если исходная валюта TON, устанавливаем статус "ожидание подтверждения"
+      if (fromCurrency === 'TON') {
+        exchange.sourceTransaction = {
+          status: 'pending',
+          address: wallet.address
+        };
+      }
+      
+      // Если целевая валюта TON, подготавливаем транзакцию отправки
+      if (toCurrency === 'TON') {
+        exchange.destinationTransaction = {
+          status: 'pending',
+          address: req.body.tonAddress || wallet.address
+        };
+      }
+    }
+    
+    await exchange.save();
+    
+    // Привязываем транзакцию к кошельку, если он существует
+    if (exchange.cryptoWallet) {
+      const wallet = await Wallet.findById(exchange.cryptoWallet);
+      if (wallet) {
+        if (!wallet.transactions) wallet.transactions = [];
+        wallet.transactions.push(exchange._id);
+        await wallet.save();
+      }
     }
     
     res.status(201).json({
@@ -128,6 +191,92 @@ router.post('/start', protect, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error when starting exchange'
+    });
+  }
+});
+
+// Check TON payment status
+router.get('/check-payment/:id', protect, async (req, res) => {
+  try {
+    const exchange = await Exchange.findOne({
+      _id: req.params.id,
+      user: req.user.id
+    }).populate('cryptoWallet');
+    
+    if (!exchange) {
+      return res.status(404).json({
+        success: false,
+        message: 'Exchange not found'
+      });
+    }
+    
+    // Проверяем только транзакции с TON
+    if (exchange.fromCurrency === 'TON' && exchange.status === 'initiated') {
+      // Получаем адрес кошелька
+      const wallet = exchange.cryptoWallet;
+      
+      if (!wallet) {
+        return res.status(400).json({
+          success: false,
+          message: 'No wallet associated with this exchange'
+        });
+      }
+      
+      // Проверяем баланс
+      const balance = await checkTonBalance(wallet.address);
+      
+      // Обновляем баланс кошелька
+      wallet.balance = balance;
+      wallet.lastBalanceUpdate = Date.now();
+      await wallet.save();
+      
+      // Если баланс равен или больше суммы обмена, подтверждаем оплату
+      if (balance >= exchange.fromAmount) {
+        // Обновляем статус транзакции
+        exchange.sourceTransaction = {
+          ...exchange.sourceTransaction,
+          status: 'completed',
+          txId: 'AUTO_CONFIRMED_' + Date.now()
+        };
+        
+        exchange.status = 'processing';
+        await exchange.save();
+        
+        return res.json({
+          success: true,
+          message: 'Payment confirmed',
+          data: {
+            status: exchange.status,
+            balance
+          }
+        });
+      }
+      
+      // Если баланс недостаточен
+      return res.json({
+        success: true,
+        message: 'Waiting for payment',
+        data: {
+          status: 'waiting',
+          balance,
+          required: exchange.fromAmount
+        }
+      });
+    }
+    
+    // Для других валют или статусов
+    return res.json({
+      success: true,
+      message: 'No payment check needed',
+      data: {
+        status: exchange.status
+      }
+    });
+  } catch (error) {
+    req.logger.error(`Check payment error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      message: 'Server error when checking payment'
     });
   }
 });

@@ -1,10 +1,4 @@
-const express = require('express');
-const mongoose = require('mongoose');
-const cors = require('cors');
-const dotenv = require('dotenv');
-// Комментируем TON для отладки
-// const { TonClient } = require('ton');
-const winston = require('winston');
+const express = require('express');const mongoose = require('mongoose');const cors = require('cors');const dotenv = require('dotenv');// Импортируем наш новый логгерconst logger = require('./config/logger');// Импортируем сервис обработки платежейconst paymentProcessor = require('./services/paymentProcessor');
 
 // Load environment variables
 dotenv.config();
@@ -20,11 +14,7 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Диагностический middleware для логирования запросов
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-  next();
-});
+// Диагностический middleware для логирования запросовapp.use((req, res, next) => {  logger.info(`${req.method} ${req.url}`);  next();});
 
 // Проверка доступности - корневой маршрут
 app.get('/', (req, res) => {
@@ -40,24 +30,7 @@ app.get('/favicon.ico', (req, res) => {
   res.status(204).end(); // Отправляем "No Content"
 });
 
-// Configure logger
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
-    new winston.transports.File({ filename: 'logs/combined.log' })
-  ]
-});
-
-if (process.env.NODE_ENV !== 'production') {
-  logger.add(new winston.transports.Console({
-    format: winston.format.simple()
-  }));
-}
+// Логгер импортирован из ./config/logger.js
 
 // Routes
 const exchangeRoutes = require('./routes/exchange');
@@ -74,12 +47,7 @@ app.use('/api/wallets', walletRoutes);
 //  endpoint: process.env.TON_ENDPOINT || 'https://toncenter.com/api/v2/jsonRPC'
 // });
 
-// Make TON client available in req
-app.use((req, res, next) => {
-  // req.tonClient = tonClient;
-  req.logger = logger;
-  next();
-});
+// Make logger available in reqapp.use((req, res, next) => {  req.logger = logger;  next();});
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -90,25 +58,22 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Connect to MongoDB
-console.log('Trying to connect to MongoDB with URL:', process.env.MONGO_URL);
-mongoose.set('strictQuery', false); // Добавляем, чтобы убрать предупреждение
-mongoose.connect(process.env.MONGO_URL || 'mongodb://localhost:27017/lira-rub-exchange', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-  .then(() => {
-    logger.info('MongoDB connected');
-    console.log('MongoDB connected');
-    // Start server
-    const PORT = process.env.PORT || 8080; // Railway обычно использует порт 8080
-    app.listen(PORT, '0.0.0.0', () => { // Слушаем на всех интерфейсах
-      logger.info(`Server running on port ${PORT}`);
-      console.log(`Server running on port ${PORT}`);
-    });
-  })
-  .catch((err) => {
-    console.error('MongoDB connection full error:', err);
-    logger.error('MongoDB connection error:', err.message);
-    process.exit(1);
-  }); 
+// Connect to MongoDBlogger.info('Trying to connect to MongoDB with URL:', process.env.MONGO_URL);mongoose.set('strictQuery', false); // Добавляем, чтобы убрать предупреждениеmongoose.connect(process.env.MONGO_URL || 'mongodb://localhost:27017/lira-rub-exchange', {  useNewUrlParser: true,  useUnifiedTopology: true})  .then(() => {    logger.info('MongoDB connected');        // Запускаем сервис обработки платежей    if (process.env.ENABLE_PAYMENT_PROCESSOR !== 'false') {      logger.info('Starting payment processor service');      paymentProcessor.start();    } else {      logger.info('Payment processor disabled via environment variable');    }        // Start server    const PORT = process.env.PORT || 8080; // Railway обычно использует порт 8080    app.listen(PORT, '0.0.0.0', () => { // Слушаем на всех интерфейсах      logger.info(`Server running on port ${PORT}`);    });  })  .catch((err) => {    logger.error('MongoDB connection error:', err);    process.exit(1);  }); 
+
+// Обработчики завершения работы
+process.on('SIGINT', gracefulShutdown);
+process.on('SIGTERM', gracefulShutdown);
+
+// Функция для корректного завершения работы
+function gracefulShutdown() {
+  logger.info('Shutting down services...');
+  
+  // Останавливаем сервис обработки платежей
+  paymentProcessor.stop();
+  
+  // Закрываем соединение с MongoDB
+  mongoose.connection.close(() => {
+    logger.info('MongoDB connection closed');
+    process.exit(0);
+  });
+} 

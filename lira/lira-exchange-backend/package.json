@@ -11,16 +11,21 @@
     "build": "npm install --legacy-peer-deps"
   },
   "dependencies": {
+    "@ton/crypto": "^3.2.0",
+    "@ton/ton": "^13.9.0",
     "axios": "^1.3.3",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.0.3",
     "express": "^4.18.2",
+    "express-async-handler": "^1.2.0",
     "ip-address": "10.0.1",
-    "jssha": "2.4.2",
     "jsonwebtoken": "^9.0.0",
+    "jssha": "2.4.2",
     "mongoose": "^6.9.1",
     "pg": "^8.16.0",
+    "qrcode": "^1.5.4",
+    "react-icons": "^5.5.0",
     "sequelize": "^6.37.7",
     "smart-buffer": "3.0.0",
     "socks": "2.6.2",
@@ -28,7 +33,8 @@
     "ton-core": "0.47.1",
     "ton-crypto": "3.2.0",
     "ton-crypto-primitives": "2.0.0",
-    "winston": "^3.8.2"
+    "winston": "^3.9.0",
+    "winston-daily-rotate-file": "^4.7.1"
   },
   "devDependencies": {
     "concurrently": "^7.6.0",

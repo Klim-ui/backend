@@ -6,6 +6,7 @@ const { protect, admin } = require('../middleware/auth');
 const { TonClient } = require('ton');
 const { mnemonicToPrivateKey, mnemonicNew } = require('ton-crypto');
 const { WalletContractV4 } = require('ton');
+const { generateTonWallet, checkTonBalance, getTonTransactions } = require('../utils/tonUtils');
 
 // @route   GET /api/wallets
 // @desc    Get all user wallets
@@ -60,37 +61,32 @@ router.post('/', protect, async (req, res) => {
     
     // Handle wallet creation based on type
     if (walletType === 'TON') {
-      // Generate TON wallet
-      // This is a simplified version - in production, a more secure approach is needed
-      const mnemonic = await mnemonicNew();
-      const keyPair = await mnemonicToPrivateKey(mnemonic);
+      // Генерируем TON-кошелек с использованием нашей утилиты
+      const tonWallet = await generateTonWallet();
       
-      // Create wallet contract for TON
-      const tonClient = req.tonClient || new TonClient({
-        endpoint: process.env.TON_ENDPOINT || 'https://toncenter.com/api/v2/jsonRPC'
-      });
-      
-      const walletContract = WalletContractV4.create({
-        publicKey: keyPair.publicKey,
-        workchain: 0
-      });
-      
-      const walletAddress = walletContract.address.toString();
-      
-      wallet = await Wallet.create({
+      // Создаем объект кошелька в базе данных
+      const newWallet = new Wallet({
         user: req.user.id,
         walletType,
-        address: walletAddress,
-        tonMnemonic: mnemonic.join(' '), // Should be encrypted in production
+        address: tonWallet.address,
+        publicKey: tonWallet.publicKey,
         balance: 0,
         isActive: true,
         isHot: true
       });
       
-      // Remove sensitive data before sending response
-      wallet = wallet.toObject();
+      // Шифруем мнемонику перед сохранением
+      newWallet.tonMnemonic = newWallet.encryptMnemonic(tonWallet.mnemonic);
+      
+      // Генерируем QR-код для адреса
+      newWallet.qrCodeUrl = newWallet.generateQrCode();
+      
+      // Сохраняем кошелек
+      await newWallet.save();
+      
+      // Удаляем конфиденциальные данные перед отправкой ответа
+      wallet = newWallet.toObject();
       delete wallet.tonMnemonic;
-      delete wallet.privateKeyEncrypted;
       
     } else if (walletType === 'USDT_TRC20' || walletType === 'USDT_ERC20') {
       // Placeholder for other wallet types - would require integration with respective chains
@@ -139,18 +135,11 @@ router.get('/:id', protect, async (req, res) => {
       });
     }
     
-    // Update balance from blockchain (simplified)
-    // In a real implementation, this would query the blockchain for the current balance
-    
-    // For TON wallets
+    // Обновляем баланс из блокчейна с использованием нашей утилиты
     if (wallet.walletType === 'TON') {
       try {
-        const tonClient = req.tonClient || new TonClient({
-          endpoint: process.env.TON_ENDPOINT || 'https://toncenter.com/api/v2/jsonRPC'
-        });
-        
-        const walletInfo = await tonClient.getWalletInfo(wallet.address);
-        wallet.balance = walletInfo.balance / 1e9; // Convert from nanoTON to TON
+        const balance = await checkTonBalance(wallet.address);
+        wallet.balance = balance;
         wallet.lastBalanceUpdate = Date.now();
         await wallet.save();
       } catch (tonError) {
@@ -168,6 +157,56 @@ router.get('/:id', protect, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error when fetching wallet'
+    });
+  }
+});
+
+// @route   GET /api/wallets/:id/transactions
+// @desc    Get wallet transactions
+// @access  Private
+router.get('/:id/transactions', protect, async (req, res) => {
+  try {
+    const wallet = await Wallet.findOne({
+      _id: req.params.id,
+      user: req.user.id
+    });
+    
+    if (!wallet) {
+      return res.status(404).json({
+        success: false,
+        message: 'Wallet not found'
+      });
+    }
+    
+    // Получаем транзакции из блокчейна
+    if (wallet.walletType === 'TON') {
+      try {
+        const transactions = await getTonTransactions(wallet.address, 20);
+        return res.json({
+          success: true,
+          count: transactions.length,
+          data: transactions
+        });
+      } catch (tonError) {
+        req.logger?.error(`TON transactions error: ${tonError.message}`);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to fetch TON transactions'
+        });
+      }
+    }
+    
+    // Для других типов кошельков
+    return res.json({
+      success: true,
+      count: 0,
+      data: []
+    });
+  } catch (error) {
+    req.logger?.error(`Get wallet transactions error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      message: 'Server error when fetching transactions'
     });
   }
 });
