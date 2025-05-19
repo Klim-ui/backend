@@ -67,6 +67,8 @@ app.use((err, req, res, next) => {
 });
 
 // Connect to MongoDB
+console.log('Trying to connect to MongoDB with URL:', process.env.MONGO_URL);
+mongoose.set('strictQuery', false); // Добавляем, чтобы убрать предупреждение
 mongoose.connect(process.env.MONGO_URL || 'mongodb://localhost:27017/lira-rub-exchange', {
   useNewUrlParser: true,
   useUnifiedTopology: true
@@ -81,6 +83,7 @@ mongoose.connect(process.env.MONGO_URL || 'mongodb://localhost:27017/lira-rub-ex
     });
   })
   .catch((err) => {
+    console.error('MongoDB connection full error:', err);
     logger.error('MongoDB connection error:', err.message);
     process.exit(1);
   }); 
