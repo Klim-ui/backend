@@ -3,6 +3,6 @@ nixPkgs = ["nodejs-18_x"]
 
 [phases.install]
 cmds = ["npm install --legacy-peer-deps"]
-
+ 
 [phases.start]
 cmds = ["npm start"] 
