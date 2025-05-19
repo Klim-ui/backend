@@ -14,11 +14,7 @@ const app = express();
 
 // Настройка CORS для разрешения запросов с фронтенда
 app.use(cors({
-  origin: [
-    'https://frontend-beta-two-64.vercel.app',
-    'http://localhost:3000',
-    'https://frontend-production-d182.up.railway.app'
-  ],
+  origin: '*', // Разрешаем запросы с любого домена во время разработки
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
@@ -85,8 +81,8 @@ mongoose.connect(process.env.MONGO_URL || 'mongodb://localhost:27017/lira-rub-ex
     logger.info('MongoDB connected');
     console.log('MongoDB connected');
     // Start server
-    const PORT = process.env.PORT || 5000;
-    app.listen(PORT, () => {
+    const PORT = process.env.PORT || 8080; // Railway обычно использует порт 8080
+    app.listen(PORT, '0.0.0.0', () => { // Слушаем на всех интерфейсах
       logger.info(`Server running on port ${PORT}`);
       console.log(`Server running on port ${PORT}`);
     });

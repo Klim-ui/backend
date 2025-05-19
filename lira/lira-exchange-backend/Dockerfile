@@ -18,10 +18,10 @@ COPY . .
 RUN mkdir -p logs
 
 # Открываем порт
-EXPOSE 5000
+EXPOSE 8080
 
 # Указываем переменные окружения напрямую (если не переданы из Railway)
-ENV PORT=5000
+ENV PORT=8080
 ENV NODE_ENV=production
 # Переменные подключения к MongoDB должны быть настроены в Railway
 
