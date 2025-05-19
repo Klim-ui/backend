@@ -20,10 +20,19 @@ const generateToken = (id) => {
 router.post('/register', async (req, res) => {
   try {
     const { email, password, firstName, lastName, phoneNumber } = req.body;
+    
+    console.log('Регистрация пользователя:', { 
+      email, 
+      passwordLength: password ? password.length : 0,
+      firstName, 
+      lastName, 
+      phoneNumber 
+    });
 
     // Check if user exists
     const userExists = await User.findOne({ email });
     if (userExists) {
+      console.log('Пользователь уже существует:', email);
       return res.status(400).json({
         success: false,
         message: 'User already exists',
@@ -32,6 +41,13 @@ router.post('/register', async (req, res) => {
 
     // Проверка наличия всех обязательных полей
     if (!email || !password || !firstName || !lastName || !phoneNumber) {
+      console.log('Отсутствуют обязательные поля:', { 
+        email: !!email, 
+        password: !!password, 
+        firstName: !!firstName, 
+        lastName: !!lastName, 
+        phoneNumber: !!phoneNumber 
+      });
       return res.status(400).json({
         success: false,
         message: 'Please provide all required fields: email, password, firstName, lastName, phoneNumber',
@@ -39,6 +55,7 @@ router.post('/register', async (req, res) => {
       });
     }
 
+    console.log('Создание пользователя...');
     // Create user
     const user = await User.create({
       email,
@@ -47,6 +64,8 @@ router.post('/register', async (req, res) => {
       lastName,
       phoneNumber,
     });
+
+    console.log('Пользователь создан:', user._id);
 
     if (user) {
       // Generate token
@@ -72,7 +91,8 @@ router.post('/register', async (req, res) => {
       });
     }
   } catch (error) {
-    console.error('Register error:', error);
+    console.error('Register error complete details:', error);
+    console.error('Stack trace:', error.stack);
     req.logger?.error(`Register error: ${error.message}`);
     
     // Более информативный ответ об ошибке
