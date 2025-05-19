@@ -469,6 +469,130 @@ router.post('/calculate', async (req, res) => {
   }
 });
 
+// Тестовые курсы валют для инициализации
+const testRates = [
+  {
+    sourceCurrency: "TRY",
+    targetCurrency: "RUB",
+    baseRate: 2.4,
+    buyRate: 2.5,  
+    sellRate: 2.3,
+    source: "manual",
+    minAmount: 100,
+    maxAmount: 50000,
+    isActive: true
+  },
+  {
+    sourceCurrency: "TRY",
+    targetCurrency: "TON",
+    baseRate: 0.01,
+    buyRate: 0.01,
+    sellRate: 0.009,
+    source: "manual",
+    minAmount: 100,
+    maxAmount: 50000,
+    isActive: true
+  },
+  {
+    sourceCurrency: "TON",
+    targetCurrency: "RUB",
+    baseRate: 240,
+    buyRate: 250,
+    sellRate: 230,
+    source: "manual",
+    minAmount: 0.1,
+    maxAmount: 100,
+    isActive: true
+  },
+  {
+    sourceCurrency: "TON",
+    targetCurrency: "TRY",
+    baseRate: 95,
+    buyRate: 100,
+    sellRate: 90,
+    source: "manual",
+    minAmount: 0.1,
+    maxAmount: 100,
+    isActive: true
+  },
+  {
+    sourceCurrency: "RUB",
+    targetCurrency: "TON",
+    baseRate: 0.0038,
+    buyRate: 0.004,
+    sellRate: 0.0035,
+    source: "manual",
+    minAmount: 1000,
+    maxAmount: 1000000,
+    isActive: true
+  },
+  {
+    sourceCurrency: "RUB",
+    targetCurrency: "TRY",
+    baseRate: 0.38,
+    buyRate: 0.4,
+    sellRate: 0.35,
+    source: "manual",
+    minAmount: 1000,
+    maxAmount: 1000000,
+    isActive: true
+  }
+];
+
+// Добавить тестовые курсы валют (только для разработки)
+router.post('/init-test-rates', protect, admin, async (req, res) => {
+  try {
+    // Удаляем существующие курсы (опционально)
+    await Rate.deleteMany({});
+    
+    // Добавляем тестовые курсы
+    const results = await Rate.insertMany(testRates);
+    
+    res.status(201).json({
+      success: true,
+      message: `Добавлено ${results.length} тестовых курсов валют`,
+      data: results
+    });
+  } catch (error) {
+    req.logger?.error(`Init test rates error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      message: 'Ошибка при добавлении тестовых курсов валют'
+    });
+  }
+});
+
+// Простой тестовый эндпоинт для публичного добавления курсов (без авторизации)
+router.get('/init-public-rates', async (req, res) => {
+  try {
+    // Проверяем, есть ли уже курсы
+    const existingRates = await Rate.find();
+    
+    if (existingRates.length > 0) {
+      return res.json({
+        success: true,
+        message: `Курсы валют уже существуют (${existingRates.length} записей)`,
+        data: existingRates
+      });
+    }
+    
+    // Добавляем тестовые курсы
+    const results = await Rate.insertMany(testRates);
+    
+    res.status(201).json({
+      success: true,
+      message: `Добавлено ${results.length} тестовых курсов валют`,
+      data: results
+    });
+  } catch (error) {
+    console.error(`Init public rates error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      message: 'Ошибка при добавлении тестовых курсов валют'
+    });
+  }
+});
+
 // Простой тестовый эндпоинт
 router.get('/ping', (req, res) => {
   return res.status(200).json({
