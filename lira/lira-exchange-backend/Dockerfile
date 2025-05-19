@@ -1,17 +1,19 @@
 FROM node:18
 
+# Установка необходимых системных зависимостей для TON
+RUN apt-get update && apt-get install -y \
+    python3 \
+    make \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# Копируем package.json для кэширования зависимостей
+# Сначала копируем и устанавливаем зависимости
 COPY package*.json ./
-
-# Устанавливаем работающую версию bcryptjs
-RUN npm install bcryptjs@2.3.0 --force
-
-# Затем устанавливаем все остальные зависимости
 RUN npm install --legacy-peer-deps
 
-# Копируем код проекта
+# Затем копируем код
 COPY . .
 
 # Создаем директорию для логов

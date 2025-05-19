@@ -1,6 +1,7 @@
 const { TonClient } = require('@ton/ton');
 const { mnemonicToPrivateKey, KeyPair } = require('@ton/crypto');
 const { WalletContractV4 } = require('@ton/ton');
+const { Address } = require('@ton/core');
 
 /**
  * Функции для работы с блокчейном TON

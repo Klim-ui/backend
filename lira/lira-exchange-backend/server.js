@@ -1,4 +1,11 @@
-const express = require('express');const mongoose = require('mongoose');const cors = require('cors');const dotenv = require('dotenv');// Импортируем наш новый логгерconst logger = require('./config/logger');// Импортируем сервис обработки платежейconst paymentProcessor = require('./services/paymentProcessor');
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const dotenv = require('dotenv');
+// Импортируем наш новый логгер
+const logger = require('./config/logger');
+// Импортируем сервис обработки платежей
+const paymentProcessor = require('./services/paymentProcessor');
 
 // Load environment variables
 dotenv.config();
@@ -14,7 +21,11 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Диагностический middleware для логирования запросовapp.use((req, res, next) => {  logger.info(`${req.method} ${req.url}`);  next();});
+// Диагностический middleware для логирования запросов
+app.use((req, res, next) => {
+  logger.info(`${req.method} ${req.url}`);
+  next();
+});
 
 // Проверка доступности - корневой маршрут
 app.get('/', (req, res) => {
@@ -47,7 +58,11 @@ app.use('/api/wallets', walletRoutes);
 //  endpoint: process.env.TON_ENDPOINT || 'https://toncenter.com/api/v2/jsonRPC'
 // });
 
-// Make logger available in reqapp.use((req, res, next) => {  req.logger = logger;  next();});
+// Make logger available in req
+app.use((req, res, next) => {
+  req.logger = logger;
+  next();
+});
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -58,7 +73,34 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Connect to MongoDBlogger.info('Trying to connect to MongoDB with URL:', process.env.MONGO_URL);mongoose.set('strictQuery', false); // Добавляем, чтобы убрать предупреждениеmongoose.connect(process.env.MONGO_URL || 'mongodb://localhost:27017/lira-rub-exchange', {  useNewUrlParser: true,  useUnifiedTopology: true})  .then(() => {    logger.info('MongoDB connected');        // Запускаем сервис обработки платежей    if (process.env.ENABLE_PAYMENT_PROCESSOR !== 'false') {      logger.info('Starting payment processor service');      paymentProcessor.start();    } else {      logger.info('Payment processor disabled via environment variable');    }        // Start server    const PORT = process.env.PORT || 8080; // Railway обычно использует порт 8080    app.listen(PORT, '0.0.0.0', () => { // Слушаем на всех интерфейсах      logger.info(`Server running on port ${PORT}`);    });  })  .catch((err) => {    logger.error('MongoDB connection error:', err);    process.exit(1);  }); 
+// Connect to MongoDB
+logger.info('Trying to connect to MongoDB with URL:', process.env.MONGO_URL);
+mongoose.set('strictQuery', false); // Добавляем, чтобы убрать предупреждение
+mongoose.connect(process.env.MONGO_URL || 'mongodb://localhost:27017/lira-rub-exchange', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
+  .then(() => {
+    logger.info('MongoDB connected');
+    
+    // Запускаем сервис обработки платежей
+    if (process.env.ENABLE_PAYMENT_PROCESSOR !== 'false') {
+      logger.info('Starting payment processor service');
+      paymentProcessor.start();
+    } else {
+      logger.info('Payment processor disabled via environment variable');
+    }
+    
+    // Start server
+    const PORT = process.env.PORT || 8080; // Railway обычно использует порт 8080
+    app.listen(PORT, '0.0.0.0', () => { // Слушаем на всех интерфейсах
+      logger.info(`Server running on port ${PORT}`);
+    });
+  })
+  .catch((err) => {
+    logger.error('MongoDB connection error:', err);
+    process.exit(1);
+  });
 
 // Обработчики завершения работы
 process.on('SIGINT', gracefulShutdown);
