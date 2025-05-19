@@ -20,6 +20,26 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Диагностический middleware для логирования запросов
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  next();
+});
+
+// Проверка доступности - корневой маршрут
+app.get('/', (req, res) => {
+  res.status(200).json({
+    message: 'API сервер работает',
+    status: 'online',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Обработчик для favicon.ico
+app.get('/favicon.ico', (req, res) => {
+  res.status(204).end(); // Отправляем "No Content"
+});
+
 // Configure logger
 const logger = winston.createLogger({
   level: 'info',
