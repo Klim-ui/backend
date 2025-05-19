@@ -2,7 +2,8 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const { TonClient } = require('ton');
+// Комментируем TON для отладки
+// const { TonClient } = require('ton');
 const winston = require('winston');
 
 // Load environment variables
@@ -43,14 +44,15 @@ app.use('/api/exchange', exchangeRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/wallets', walletRoutes);
 
+// Закомментировал инициализацию TON-клиента
 // Initialize TON client
-const tonClient = new TonClient({
-  endpoint: process.env.TON_ENDPOINT || 'https://toncenter.com/api/v2/jsonRPC'
-});
+// const tonClient = new TonClient({
+//  endpoint: process.env.TON_ENDPOINT || 'https://toncenter.com/api/v2/jsonRPC'
+// });
 
 // Make TON client available in req
 app.use((req, res, next) => {
-  req.tonClient = tonClient;
+  // req.tonClient = tonClient;
   req.logger = logger;
   next();
 });
@@ -65,7 +67,7 @@ app.use((err, req, res, next) => {
 });
 
 // Connect to MongoDB
-mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/lira-rub-exchange', {
+mongoose.connect(process.env.MONGO_URL || 'mongodb://localhost:27017/lira-rub-exchange', {
   useNewUrlParser: true,
   useUnifiedTopology: true
 })
