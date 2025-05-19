@@ -14,7 +14,11 @@ const app = express();
 
 // Настройка CORS для разрешения запросов с фронтенда
 app.use(cors({
-  origin: ['https://frontend-beta-two-64.vercel.app', 'http://localhost:3000'],
+  origin: [
+    'https://frontend-beta-two-64.vercel.app',
+    'http://localhost:3000',
+    'https://frontend-production-d182.up.railway.app'
+  ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
