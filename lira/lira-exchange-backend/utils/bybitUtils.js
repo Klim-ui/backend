@@ -142,7 +142,9 @@ const updateExchangeRates = async (Rate) => {
         return await Rate.find({ 
           $or: [
             { sourceCurrency: 'TRY', targetCurrency: 'USDT' },
-            { sourceCurrency: 'USDT', targetCurrency: 'TRY' }
+            { sourceCurrency: 'USDT', targetCurrency: 'TRY' },
+            { sourceCurrency: 'TRY', targetCurrency: 'RUB' },
+            { sourceCurrency: 'RUB', targetCurrency: 'TRY' }
           ]
         });
       }
@@ -151,6 +153,12 @@ const updateExchangeRates = async (Rate) => {
       const defaultLastPrice = 31.5; // Тестовое значение курса USDT/TRY
       const defaultBidPrice = 31.4;
       const defaultAskPrice = 31.6;
+      
+      // Фиксированный курс USDT/RUB
+      const usdtRubRate = 90.5;
+      
+      // Кросс-курс TRY/RUB
+      const tryRubRate = defaultLastPrice * usdtRubRate / 100; // TRY/RUB = (TRY/USDT) * (USDT/RUB)
       
       // Создаем/обновляем курс TRY -> USDT с тестовыми значениями
       await Rate.findOneAndUpdate(
@@ -187,8 +195,51 @@ const updateExchangeRates = async (Rate) => {
         },
         { upsert: true, new: true }
       );
+      
+      // Создаем/обновляем курс TRY -> RUB с тестовыми значениями
+      await Rate.findOneAndUpdate(
+        { sourceCurrency: 'TRY', targetCurrency: 'RUB' },
+        {
+          sourceCurrency: 'TRY',
+          targetCurrency: 'RUB',
+          baseRate: tryRubRate,
+          sellRate: tryRubRate * 0.98, // Применяем маржу
+          buyRate: tryRubRate * 1.02,
+          markupPercentage: 2,
+          source: 'bybit-crossrate-default',
+          isActive: true,
+          minAmount: 100,
+          maxAmount: 50000
+        },
+        { upsert: true, new: true }
+      );
+      
+      // Создаем/обновляем курс RUB -> TRY с тестовыми значениями
+      await Rate.findOneAndUpdate(
+        { sourceCurrency: 'RUB', targetCurrency: 'TRY' },
+        {
+          sourceCurrency: 'RUB',
+          targetCurrency: 'TRY',
+          baseRate: 1 / tryRubRate,
+          sellRate: (1 / tryRubRate) * 0.98,
+          buyRate: (1 / tryRubRate) * 1.02,
+          markupPercentage: 2,
+          source: 'bybit-crossrate-default',
+          isActive: true,
+          minAmount: 1000,
+          maxAmount: 500000
+        },
+        { upsert: true, new: true }
+      );
     } else {
       // Если все значения корректны, обновляем курсы с реальными данными
+      
+      // Фиксированный курс USDT/RUB
+      const usdtRubRate = 90.5;
+      
+      // Кросс-курс TRY/RUB
+      const tryRubRate = lastPrice * usdtRubRate / 100; // TRY/RUB = (TRY/USDT) * (USDT/RUB)
+      
       // Создаем/обновляем курс TRY -> USDT
       await Rate.findOneAndUpdate(
         { sourceCurrency: 'TRY', targetCurrency: 'USDT' },
@@ -224,13 +275,51 @@ const updateExchangeRates = async (Rate) => {
         },
         { upsert: true, new: true }
       );
+      
+      // Создаем/обновляем курс TRY -> RUB на основе кросс-курса
+      await Rate.findOneAndUpdate(
+        { sourceCurrency: 'TRY', targetCurrency: 'RUB' },
+        {
+          sourceCurrency: 'TRY',
+          targetCurrency: 'RUB',
+          baseRate: tryRubRate,
+          sellRate: tryRubRate * 0.98, // Применяем маржу
+          buyRate: tryRubRate * 1.02,
+          markupPercentage: 2,
+          source: 'bybit-crossrate',
+          isActive: true,
+          minAmount: 100,
+          maxAmount: 50000
+        },
+        { upsert: true, new: true }
+      );
+      
+      // Создаем/обновляем курс RUB -> TRY
+      await Rate.findOneAndUpdate(
+        { sourceCurrency: 'RUB', targetCurrency: 'TRY' },
+        {
+          sourceCurrency: 'RUB',
+          targetCurrency: 'TRY',
+          baseRate: 1 / tryRubRate,
+          sellRate: (1 / tryRubRate) * 0.98,
+          buyRate: (1 / tryRubRate) * 1.02,
+          markupPercentage: 2,
+          source: 'bybit-crossrate',
+          isActive: true,
+          minAmount: 1000,
+          maxAmount: 500000
+        },
+        { upsert: true, new: true }
+      );
     }
     
     // Получаем обновленные курсы
     return await Rate.find({ 
       $or: [
         { sourceCurrency: 'TRY', targetCurrency: 'USDT' },
-        { sourceCurrency: 'USDT', targetCurrency: 'TRY' }
+        { sourceCurrency: 'USDT', targetCurrency: 'TRY' },
+        { sourceCurrency: 'TRY', targetCurrency: 'RUB' },
+        { sourceCurrency: 'RUB', targetCurrency: 'TRY' }
       ]
     });
   } catch (error) {
