@@ -6,6 +6,8 @@ const dotenv = require('dotenv');
 const logger = require('./config/logger');
 // Импортируем сервис обработки платежей
 const paymentProcessor = require('./services/paymentProcessor');
+// Импортируем сервис обновления курсов
+const rateUpdater = require('./services/rateUpdater');
 
 // Load environment variables
 dotenv.config();
@@ -91,6 +93,14 @@ mongoose.connect(process.env.MONGO_URL || 'mongodb://localhost:27017/lira-rub-ex
       logger.info('Payment processor disabled via environment variable');
     }
     
+    // Запускаем сервис обновления курсов
+    if (process.env.ENABLE_RATE_UPDATER !== 'false') {
+      logger.info('Starting rate updater service');
+      rateUpdater.start();
+    } else {
+      logger.info('Rate updater disabled via environment variable');
+    }
+    
     // Start server
     const PORT = process.env.PORT || 8080; // Railway обычно использует порт 8080
     app.listen(PORT, '0.0.0.0', () => { // Слушаем на всех интерфейсах
@@ -112,6 +122,9 @@ function gracefulShutdown() {
   
   // Останавливаем сервис обработки платежей
   paymentProcessor.stop();
+  
+  // Останавливаем сервис обновления курсов
+  rateUpdater.stop();
   
   // Закрываем соединение с MongoDB
   mongoose.connection.close(() => {

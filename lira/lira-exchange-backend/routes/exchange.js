@@ -9,6 +9,7 @@ const { TonClient } = require('@ton/ton');
 const { mnemonicToPrivateKey } = require('@ton/crypto');
 // Импортируем наши TON утилиты
 const { generateTonWallet, checkTonBalance, getTonTransactions } = require('../utils/tonUtils');
+const { createOrder, getBalance, getTickerPrice } = require('../utils/bybitUtils');
 
 // Middleware for checking authentication (to be implemented)
 const { protect, admin } = require('../middleware/auth');
@@ -600,6 +601,92 @@ router.get('/ping', (req, res) => {
     success: true,
     timestamp: new Date().toISOString()
   });
+});
+
+// Создать ордер на покупку/продажу 
+router.post('/create-order', protect, async (req, res) => {
+  try {
+    const { symbol, side, orderType, qty, price } = req.body;
+    
+    // Проверяем обязательные параметры
+    if (!symbol || !side || !orderType || !qty) {
+      return res.status(400).json({
+        success: false,
+        message: 'Пожалуйста, укажите все необходимые параметры (symbol, side, orderType, qty)'
+      });
+    }
+    
+    // Создаем ордер через Bybit API
+    const order = await createOrder(symbol, side, orderType, qty, price);
+    
+    res.status(201).json({
+      success: true,
+      message: 'Ордер создан успешно',
+      data: order
+    });
+  } catch (error) {
+    req.logger?.error(`Create order error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      message: `Ошибка при создании ордера: ${error.message}`
+    });
+  }
+});
+
+// Получить баланс аккаунта
+router.get('/balance/:coin', protect, async (req, res) => {
+  try {
+    const { coin } = req.params;
+    
+    if (!coin) {
+      return res.status(400).json({
+        success: false,
+        message: 'Укажите валюту (coin)'
+      });
+    }
+    
+    // Получаем баланс через Bybit API
+    const balance = await getBalance(coin);
+    
+    res.json({
+      success: true,
+      data: balance
+    });
+  } catch (error) {
+    req.logger?.error(`Get balance error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      message: `Ошибка при получении баланса: ${error.message}`
+    });
+  }
+});
+
+// Получить текущий курс для пары
+router.get('/ticker/:symbol', async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    
+    if (!symbol) {
+      return res.status(400).json({
+        success: false,
+        message: 'Укажите символ пары (symbol)'
+      });
+    }
+    
+    // Получаем курс через Bybit API
+    const ticker = await getTickerPrice(symbol);
+    
+    res.json({
+      success: true,
+      data: ticker
+    });
+  } catch (error) {
+    req.logger?.error(`Get ticker error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      message: `Ошибка при получении курса: ${error.message}`
+    });
+  }
 });
 
 module.exports = router; 
