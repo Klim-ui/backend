@@ -120,41 +120,111 @@ const updateExchangeRates = async (Rate) => {
     // Получаем курс USDT/TRY
     const usdtTryTicker = await getTickerPrice('USDTTRY');
     
-    // Создаем/обновляем курс TRY -> USDT
-    await Rate.findOneAndUpdate(
-      { sourceCurrency: 'TRY', targetCurrency: 'USDT' },
-      {
-        sourceCurrency: 'TRY',
-        targetCurrency: 'USDT',
-        baseRate: parseFloat(usdtTryTicker.lastPrice), 
-        sellRate: parseFloat(usdtTryTicker.bid), // Цена покупки USDT за TRY
-        buyRate: parseFloat(usdtTryTicker.ask),  // Цена продажи USDT за TRY
-        markupPercentage: 2,
-        source: 'bybit',
-        isActive: true,
-        minAmount: 100,
-        maxAmount: 50000
-      },
-      { upsert: true, new: true }
-    );
+    // Проверяем наличие необходимых данных и конвертируем их в числа с проверкой на NaN
+    const lastPrice = parseFloat(usdtTryTicker.lastPrice);
+    const bidPrice = parseFloat(usdtTryTicker.bid);
+    const askPrice = parseFloat(usdtTryTicker.ask);
     
-    // Создаем/обновляем курс USDT -> TRY
-    await Rate.findOneAndUpdate(
-      { sourceCurrency: 'USDT', targetCurrency: 'TRY' },
-      {
-        sourceCurrency: 'USDT',
-        targetCurrency: 'TRY',
-        baseRate: 1 / parseFloat(usdtTryTicker.lastPrice), 
-        sellRate: 1 / parseFloat(usdtTryTicker.ask), // Цена покупки TRY за USDT
-        buyRate: 1 / parseFloat(usdtTryTicker.bid),  // Цена продажи TRY за USDT
-        markupPercentage: 2,
-        source: 'bybit',
-        isActive: true,
-        minAmount: 10,
-        maxAmount: 5000
-      },
-      { upsert: true, new: true }
-    );
+    // Проверяем корректность всех значений
+    if (isNaN(lastPrice) || isNaN(bidPrice) || isNaN(askPrice)) {
+      console.error('Invalid exchange rate values:', { 
+        lastPrice: usdtTryTicker.lastPrice,
+        bid: usdtTryTicker.bid,
+        ask: usdtTryTicker.ask
+      });
+      
+      // Если нет корректных значений с API, используем тестовые или последние известные курсы
+      // Сначала проверим, есть ли уже курсы в базе
+      const existingRate = await Rate.findOne({ sourceCurrency: 'TRY', targetCurrency: 'USDT' });
+      
+      if (existingRate) {
+        console.log('Using existing rate values from database');
+        return await Rate.find({ 
+          $or: [
+            { sourceCurrency: 'TRY', targetCurrency: 'USDT' },
+            { sourceCurrency: 'USDT', targetCurrency: 'TRY' }
+          ]
+        });
+      }
+      
+      // Если нет данных в базе, используем тестовые значения
+      const defaultLastPrice = 31.5; // Тестовое значение курса USDT/TRY
+      const defaultBidPrice = 31.4;
+      const defaultAskPrice = 31.6;
+      
+      // Создаем/обновляем курс TRY -> USDT с тестовыми значениями
+      await Rate.findOneAndUpdate(
+        { sourceCurrency: 'TRY', targetCurrency: 'USDT' },
+        {
+          sourceCurrency: 'TRY',
+          targetCurrency: 'USDT',
+          baseRate: defaultLastPrice,
+          sellRate: defaultBidPrice, 
+          buyRate: defaultAskPrice,
+          markupPercentage: 2,
+          source: 'bybit-default',
+          isActive: true,
+          minAmount: 100,
+          maxAmount: 50000
+        },
+        { upsert: true, new: true }
+      );
+      
+      // Создаем/обновляем курс USDT -> TRY с тестовыми значениями
+      await Rate.findOneAndUpdate(
+        { sourceCurrency: 'USDT', targetCurrency: 'TRY' },
+        {
+          sourceCurrency: 'USDT',
+          targetCurrency: 'TRY',
+          baseRate: 1 / defaultLastPrice,
+          sellRate: 1 / defaultAskPrice,
+          buyRate: 1 / defaultBidPrice,
+          markupPercentage: 2,
+          source: 'bybit-default',
+          isActive: true,
+          minAmount: 10,
+          maxAmount: 5000
+        },
+        { upsert: true, new: true }
+      );
+    } else {
+      // Если все значения корректны, обновляем курсы с реальными данными
+      // Создаем/обновляем курс TRY -> USDT
+      await Rate.findOneAndUpdate(
+        { sourceCurrency: 'TRY', targetCurrency: 'USDT' },
+        {
+          sourceCurrency: 'TRY',
+          targetCurrency: 'USDT',
+          baseRate: lastPrice,
+          sellRate: bidPrice,
+          buyRate: askPrice,
+          markupPercentage: 2,
+          source: 'bybit',
+          isActive: true,
+          minAmount: 100,
+          maxAmount: 50000
+        },
+        { upsert: true, new: true }
+      );
+      
+      // Создаем/обновляем курс USDT -> TRY
+      await Rate.findOneAndUpdate(
+        { sourceCurrency: 'USDT', targetCurrency: 'TRY' },
+        {
+          sourceCurrency: 'USDT',
+          targetCurrency: 'TRY',
+          baseRate: 1 / lastPrice,
+          sellRate: 1 / askPrice,
+          buyRate: 1 / bidPrice,
+          markupPercentage: 2,
+          source: 'bybit',
+          isActive: true,
+          minAmount: 10,
+          maxAmount: 5000
+        },
+        { upsert: true, new: true }
+      );
+    }
     
     // Получаем обновленные курсы
     return await Rate.find({ 
