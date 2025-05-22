@@ -10,20 +10,75 @@ const { mnemonicToPrivateKey } = require('@ton/crypto');
 // Импортируем наши TON утилиты
 const { generateTonWallet, checkTonBalance, getTonTransactions } = require('../utils/tonUtils');
 const { createOrder, getBalance, getTickerPrice } = require('../utils/bybitUtils');
+// Импортируем сервис обновления курсов для использования кэша
+const rateUpdater = require('../services/rateUpdater');
 
 // Middleware for checking authentication (to be implemented)
 const { protect, admin } = require('../middleware/auth');
 
+// Создаем объект для хранения счетчиков запросов
+const requestCounts = {
+  rates: {
+    count: 0,
+    resetTime: Date.now() + 60000, // сбрасываем счетчик каждую минуту
+    limit: 100 // лимит запросов в минуту
+  }
+};
+
+// Middleware для ограничения частоты запросов
+const rateLimiter = (resource) => (req, res, next) => {
+  const now = Date.now();
+  
+  // Сбрасываем счетчик, если прошло достаточно времени
+  if (now > requestCounts[resource].resetTime) {
+    requestCounts[resource].count = 0;
+    requestCounts[resource].resetTime = now + 60000;
+  }
+  
+  // Увеличиваем счетчик
+  requestCounts[resource].count++;
+  
+  // Проверяем, не превышен ли лимит
+  if (requestCounts[resource].count > requestCounts[resource].limit) {
+    return res.status(429).json({
+      success: false,
+      message: 'Too many requests, please try again later'
+    });
+  }
+  
+  next();
+};
+
 // Get current exchange rates
-router.get('/rates', async (req, res) => {
+router.get('/rates', rateLimiter('rates'), async (req, res) => {
   try {
     const { from, to } = req.query;
     
-    let query = { isActive: true };
-    if (from) query.sourceCurrency = from.toUpperCase();
-    if (to) query.targetCurrency = to.toUpperCase();
+    // Пробуем получить курсы из кэша
+    let rates;
+    try {
+      // Пытаемся получить курсы из кэшированных данных
+      rates = await rateUpdater.getCachedRates();
+    } catch (cacheError) {
+      req.logger.error(`Cache error: ${cacheError.message}`);
+      
+      // Если не удалось получить из кэша, запрашиваем из базы данных
+      let query = { isActive: true };
+      if (from) query.sourceCurrency = from.toUpperCase();
+      if (to) query.targetCurrency = to.toUpperCase();
+      
+      rates = await Rate.find(query);
+    }
     
-    const rates = await Rate.find(query);
+    // Фильтруем по запрошенным валютам, если указаны
+    if (from || to) {
+      rates = rates.filter(rate => {
+        let match = true;
+        if (from) match = match && rate.sourceCurrency === from.toUpperCase();
+        if (to) match = match && rate.targetCurrency === to.toUpperCase();
+        return match;
+      });
+    }
     
     res.json({
       success: true,

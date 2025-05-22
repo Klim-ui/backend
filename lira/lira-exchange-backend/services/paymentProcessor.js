@@ -9,13 +9,44 @@ const logger = require('../config/logger');
 class PaymentProcessor {
   constructor() {
     // Интервал проверки платежей (в миллисекундах)
-    this.checkInterval = process.env.PAYMENT_CHECK_INTERVAL || 60000; // По умолчанию 1 минута
+    this.interval = process.env.PAYMENT_CHECK_INTERVAL || 60000; // По умолчанию 1 минута
     
     // Флаг активности сервиса
     this.isRunning = false;
     
     // Таймер для проверки платежей
     this.timer = null;
+    
+    // Счетчик обработанных платежей
+    this.processingCount = 0;
+    
+    // Максимальное количество одновременных обработок
+    this.maxConcurrent = 5;
+    
+    // Время последней обработки
+    this.lastProcessTime = null;
+    
+    // Счетчик ошибок
+    this.processingErrors = 0;
+    
+    // Счетчик последовательных ошибок
+    this.consecutiveErrors = 0;
+    
+    // Флаг активного режима охлаждения
+    this.cooldownActive = false;
+  }
+  
+  /**
+   * Инициализация сервиса
+   */
+  initialize(logger) {
+    this.logger = logger;
+    try {
+      this.Exchange = require('../models/Exchange');
+      logger.info('Payment processor initialized');
+    } catch (error) {
+      logger.error(`Failed to initialize payment processor: ${error.message}`);
+    }
   }
   
   /**
@@ -27,16 +58,21 @@ class PaymentProcessor {
       return;
     }
     
-    this.isRunning = true;
-    logger.info(`Starting payment processor with interval ${this.checkInterval}ms`);
+    // Проверяем, инициализирован ли Exchange
+    if (!this.Exchange) {
+      this.initialize(require('../config/logger'));
+    }
     
-    // Немедленно запускаем первую проверку
-    this.checkPendingPayments();
+    this.isRunning = true;
+    logger.info(`Starting payment processor with interval ${this.interval}ms`);
+    
+    // Обработка платежей сразу при запуске
+    this.processPayments();
     
     // Запускаем регулярные проверки
     this.timer = setInterval(() => {
-      this.checkPendingPayments();
-    }, this.checkInterval);
+      this.processPayments();
+    }, this.interval);
   }
   
   /**
@@ -58,51 +94,106 @@ class PaymentProcessor {
   }
   
   /**
-   * Проверяет все ожидающие платежи
+   * Проверяет возможность обработки платежа
    */
-  async checkPendingPayments() {
-    try {
-      logger.info('Checking pending payments...');
+  canProcess() {
+    // Если достигнут лимит одновременных обработок
+    if (this.processingCount >= this.maxConcurrent) {
+      logger.warn(`Too many concurrent payment processing (${this.processingCount}/${this.maxConcurrent})`);
+      return false;
+    }
+    
+    // Если активен режим охлаждения после ошибок
+    if (this.cooldownActive) {
+      logger.warn('Processor in cooldown mode due to errors');
+      return false;
+    }
+    
+    // Добавляем минимальную паузу между запусками обработки (500 мс)
+    if (this.lastProcessTime && Date.now() - this.lastProcessTime < 500) {
+      return false;
+    }
+    
+    return true;
+  }
+  
+  /**
+   * Увеличивает счетчик ошибок и активирует режим охлаждения при необходимости
+   */
+  registerError() {
+    this.processingErrors++;
+    this.consecutiveErrors++;
+    
+    // Если много последовательных ошибок, активируем режим охлаждения
+    if (this.consecutiveErrors >= 5) {
+      this.cooldownActive = true;
+      logger.warn('Activating cooldown mode due to consecutive errors');
       
-      // Находим все обмены со статусом 'initiated'
-      const pendingExchanges = await Exchange.find({
+      // Через 5 минут выключаем режим охлаждения
+      setTimeout(() => {
+        this.cooldownActive = false;
+        this.consecutiveErrors = 0;
+        logger.info('Cooldown mode deactivated');
+      }, 5 * 60 * 1000);
+    }
+  }
+  
+  /**
+   * Сбрасывает счетчик последовательных ошибок при успешной операции
+   */
+  registerSuccess() {
+    this.consecutiveErrors = 0;
+  }
+  
+  /**
+   * Основной метод обработки платежей
+   */
+  async processPayments() {
+    if (!this.canProcess()) {
+      return;
+    }
+    
+    this.processingCount++;
+    this.lastProcessTime = Date.now();
+    
+    try {
+      logger.info('Processing payments...');
+      
+      // Находим все обмены, ожидающие обработки
+      const pendingExchanges = await this.Exchange.find({
         status: 'initiated',
-        $or: [
-          { fromCurrency: 'TON' },
-          { toCurrency: 'TON' }
-        ]
-      }).populate('cryptoWallet user');
+        'sourceTransaction.status': 'pending'
+      }).populate('cryptoWallet');
       
       logger.info(`Found ${pendingExchanges.length} pending exchanges`);
       
-      // Обрабатываем каждый обмен
-      for (const exchange of pendingExchanges) {
+      // Обрабатываем каждый обмен с небольшой паузой между операциями
+      for (let i = 0; i < pendingExchanges.length; i++) {
+        const exchange = pendingExchanges[i];
+        
         try {
+          // Обрабатываем платеж
           await this.processExchange(exchange);
-        } catch (error) {
-          logger.error(`Error processing exchange ${exchange._id}: ${error.message}`);
-        }
-      }
-      
-      // Находим все обмены со статусом 'processing'
-      const processingExchanges = await Exchange.find({
-        status: 'processing',
-        toCurrency: 'TON'
-      }).populate('cryptoWallet user');
-      
-      logger.info(`Found ${processingExchanges.length} processing exchanges`);
-      
-      // Обрабатываем каждый обмен
-      for (const exchange of processingExchanges) {
-        try {
-          await this.completeExchange(exchange);
-        } catch (error) {
-          logger.error(`Error completing exchange ${exchange._id}: ${error.message}`);
+          this.registerSuccess();
+          
+          // Добавляем небольшую паузу между обработкой разных обменов
+          if (i < pendingExchanges.length - 1) {
+            await this.sleep(300); // 300 мс пауза
+          }
+        } catch (exchangeError) {
+          logger.error(`Error processing exchange ${exchange._id}: ${exchangeError.message}`);
+          this.registerError();
+          
+          // Делаем более длинную паузу после ошибки
+          await this.sleep(1000);
         }
       }
       
     } catch (error) {
-      logger.error(`Error checking pending payments: ${error.message}`);
+      logger.error(`Payment processing error: ${error.message}`);
+      this.registerError();
+    } finally {
+      this.processingCount--;
     }
   }
   
@@ -111,117 +202,69 @@ class PaymentProcessor {
    * @param {Object} exchange - Объект обмена
    */
   async processExchange(exchange) {
-    // Проверяем, что у обмена есть связанный кошелек
-    if (!exchange.cryptoWallet) {
-      logger.warn(`Exchange ${exchange._id} has no associated wallet`);
-      return;
-    }
+    logger.info(`Processing exchange: ${exchange._id}`);
     
-    // Если исходная валюта TON, проверяем поступление средств
-    if (exchange.fromCurrency === 'TON') {
-      return await this.checkTonDeposit(exchange);
-    }
-  }
-  
-  /**
-   * Проверяет поступление TON на кошелек
-   * @param {Object} exchange - Объект обмена
-   */
-  async checkTonDeposit(exchange) {
-    const wallet = exchange.cryptoWallet;
-    
-    // Проверяем баланс кошелька
-    const balance = await checkTonBalance(wallet.address);
-    
-    // Обновляем баланс кошелька
-    wallet.balance = balance;
-    wallet.lastBalanceUpdate = Date.now();
-    await wallet.save();
-    
-    logger.info(`Wallet ${wallet.address} has balance ${balance} TON`);
-    
-    // Если баланс достаточен для обмена
-    if (balance >= exchange.fromAmount) {
-      logger.info(`Sufficient balance for exchange ${exchange._id}. Confirming payment...`);
-      
-      // Обновляем статус транзакции
-      exchange.sourceTransaction = {
-        ...exchange.sourceTransaction,
-        status: 'completed',
-        txId: `AUTO_CONFIRMED_${Date.now()}`
-      };
-      
-      exchange.status = 'processing';
-      await exchange.save();
-      
-      logger.info(`Exchange ${exchange._id} updated to processing status`);
-      
-      // Если целевая валюта RUB и есть банковские реквизиты, отправляем уведомление администраторам
-      if (exchange.toCurrency === 'RUB' && exchange.bankAccount) {
-        // В реальной системе здесь бы отправлялось уведомление администратору
-        logger.info(`RUB payout required for exchange ${exchange._id} to bank account ${exchange.bankAccount.bank}`);
-      }
+    // Проверяем тип обмена
+    if (exchange.fromCurrency === 'TON' && exchange.cryptoWallet) {
+      await this.processTonExchange(exchange);
     } else {
-      logger.info(`Waiting for funds for exchange ${exchange._id}. Current: ${balance}, Required: ${exchange.fromAmount}`);
+      // Для других типов обменов дополнительная логика будет добавлена позже
+      logger.info(`Skipping non-TON exchange: ${exchange._id}`);
     }
   }
   
   /**
-   * Завершает обмен, отправляя TON
+   * Обрабатывает TON обмен
    * @param {Object} exchange - Объект обмена
    */
-  async completeExchange(exchange) {
-    // Завершаем только если целевая валюта TON
-    if (exchange.toCurrency !== 'TON') return;
-    
+  async processTonExchange(exchange) {
     try {
-      // Получаем кошелек для отправки TON
-      const adminWallet = await Wallet.findOne({
-        walletType: 'TON',
-        isHot: true,
-        isActive: true,
-        balance: { $gte: exchange.toAmount }
-      }).select('+tonMnemonic');
+      const wallet = exchange.cryptoWallet;
       
-      if (!adminWallet) {
-        logger.warn(`No admin wallet with sufficient balance found for exchange ${exchange._id}`);
+      if (!wallet) {
+        logger.warn(`No wallet found for exchange: ${exchange._id}`);
         return;
       }
       
-      // Расшифровываем мнемонику
-      const mnemonic = adminWallet.decryptMnemonic();
-      
-      // Получаем адрес получателя
-      const destinationAddress = exchange.destinationTransaction?.address;
-      
-      if (!destinationAddress) {
-        logger.warn(`No destination address found for exchange ${exchange._id}`);
+      // Проверяем, не слишком ли частые запросы к TON API
+      if (wallet.lastBalanceUpdate && Date.now() - wallet.lastBalanceUpdate < 60000) {
+        logger.info(`Skipping TON check for exchange ${exchange._id}, last check was less than 1 minute ago`);
         return;
       }
       
-      // Отправляем TON
-      const transaction = await sendTon(mnemonic, destinationAddress, exchange.toAmount);
-      
-      // Обновляем статус транзакции
-      exchange.destinationTransaction = {
-        ...exchange.destinationTransaction,
-        status: 'completed',
-        txId: transaction.hash
-      };
-      
-      exchange.status = 'completed';
-      exchange.completedAt = Date.now();
-      await exchange.save();
+      // Получаем баланс кошелька
+      const balance = await checkTonBalance(wallet.address);
       
       // Обновляем баланс кошелька
-      adminWallet.balance -= exchange.toAmount;
-      adminWallet.lastBalanceUpdate = Date.now();
-      await adminWallet.save();
+      wallet.balance = balance;
+      wallet.lastBalanceUpdate = Date.now();
+      await wallet.save();
       
-      logger.info(`Exchange ${exchange._id} completed successfully. Sent ${exchange.toAmount} TON to ${destinationAddress}`);
+      logger.info(`TON Wallet ${wallet.address} balance: ${balance}`);
+      
+      // Если баланс достаточен, подтверждаем оплату
+      if (balance >= exchange.fromAmount) {
+        logger.info(`Payment confirmed for exchange ${exchange._id}, balance: ${balance}, required: ${exchange.fromAmount}`);
+        
+        // Обновляем статус транзакции
+        exchange.sourceTransaction = {
+          ...exchange.sourceTransaction,
+          status: 'completed',
+          txId: 'AUTO_CONFIRMED_' + Date.now()
+        };
+        
+        exchange.status = 'processing';
+        await exchange.save();
+      }
     } catch (error) {
-      logger.error(`Error completing exchange ${exchange._id}: ${error.message}`);
+      logger.error(`Error processing TON exchange ${exchange._id}: ${error.message}`);
+      throw error; // Пробрасываем ошибку для общей обработки
     }
+  }
+  
+  // Добавим задержку между операциями
+  sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
 

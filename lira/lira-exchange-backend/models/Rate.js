@@ -3,13 +3,15 @@ const mongoose = require('mongoose');
 const RateSchema = new mongoose.Schema({
   sourceCurrency: {
     type: String,
-    enum: ['TRY', 'RUB', 'TON', 'USDT'],
-    required: true
+    required: true,
+    enum: ['TRY', 'RUB', 'TON'],
+    uppercase: true
   },
   targetCurrency: {
     type: String,
-    enum: ['TRY', 'RUB', 'TON', 'USDT'],
-    required: true
+    required: true,
+    enum: ['TRY', 'RUB', 'TON'],
+    uppercase: true
   },
   // Base rate from external source (without our markup)
   baseRate: {
@@ -50,11 +52,13 @@ const RateSchema = new mongoose.Schema({
   // Minimum and maximum transaction amounts
   minAmount: {
     type: Number,
-    default: 100  // Minimum 100 units of source currency
+    required: true,
+    default: 0
   },
   maxAmount: {
     type: Number,
-    default: 10000  // Maximum 10,000 units of source currency
+    required: true,
+    default: 1000000
   },
   // When the rate was last updated
   updatedAt: {
@@ -73,7 +77,7 @@ const RateSchema = new mongoose.Schema({
   }
 });
 
-// Create unique index for currency pair
+// Создаем индекс для быстрого поиска
 RateSchema.index({ sourceCurrency: 1, targetCurrency: 1 }, { unique: true });
 
 // Method to calculate the sell rate based on base rate and markup
