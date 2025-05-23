@@ -4,14 +4,6 @@ const Exchange = require('../models/Exchange');
 const Rate = require('../models/Rate');
 const Wallet = require('../models/Wallet');
 const User = require('../models/User');
-// Раскомментируем TON-функциональность
-const { TonClient } = require('@ton/ton');
-const { mnemonicToPrivateKey } = require('@ton/crypto');
-// Импортируем наши TON утилиты
-const { generateTonWallet, checkTonBalance, getTonTransactions } = require('../utils/tonUtils');
-const { createOrder, getBalance, getTickerPrice } = require('../utils/bybitUtils');
-// Импортируем сервис обновления курсов для использования кэша
-const rateUpdater = require('../services/rateUpdater');
 // Импортируем сервис email уведомлений
 const emailService = require('../services/emailService');
 
@@ -56,31 +48,12 @@ router.get('/rates', rateLimiter('rates'), async (req, res) => {
   try {
     const { from, to } = req.query;
     
-    // Пробуем получить курсы из кэша
-    let rates;
-    try {
-      // Пытаемся получить курсы из кэшированных данных
-      rates = await rateUpdater.getCachedRates();
-    } catch (cacheError) {
-      req.logger.error(`Cache error: ${cacheError.message}`);
-      
-      // Если не удалось получить из кэша, запрашиваем из базы данных
-      let query = { isActive: true };
-      if (from) query.sourceCurrency = from.toUpperCase();
-      if (to) query.targetCurrency = to.toUpperCase();
-      
-      rates = await Rate.find(query);
-    }
+    // Получаем курсы из базы данных
+    let query = { isActive: true };
+    if (from) query.sourceCurrency = from.toUpperCase();
+    if (to) query.targetCurrency = to.toUpperCase();
     
-    // Фильтруем по запрошенным валютам, если указаны
-    if (from || to) {
-      rates = rates.filter(rate => {
-        let match = true;
-        if (from) match = match && rate.sourceCurrency === from.toUpperCase();
-        if (to) match = match && rate.targetCurrency === to.toUpperCase();
-        return match;
-      });
-    }
+    const rates = await Rate.find(query);
     
     res.json({
       success: true,
@@ -88,7 +61,7 @@ router.get('/rates', rateLimiter('rates'), async (req, res) => {
       data: rates
     });
   } catch (error) {
-    req.logger.error(`Rate fetch error: ${error.message}`);
+    console.error(`Rate fetch error: ${error.message}`);
     res.status(500).json({
       success: false,
       message: 'Server error when fetching rates'
@@ -172,79 +145,13 @@ router.post('/start', protect, async (req, res) => {
       };
     }
     
-    // Если обмен через TON
-    if (fromCurrency === 'TON' || toCurrency === 'TON') {
-      let wallet;
-      
-      // Проверяем, есть ли у пользователя уже TON кошелек
-      wallet = await Wallet.findOne({
-        user: req.user.id,
-        walletType: 'TON',
-        isActive: true
-      });
-      
-      // Если кошелька нет, создаем новый
-      if (!wallet) {
-        // Генерируем новый TON кошелек
-        const tonWallet = await generateTonWallet();
-        
-        // Создаем новый кошелек в базе данных
-        wallet = new Wallet({
-          user: req.user.id,
-          walletType: 'TON',
-          address: tonWallet.address,
-          publicKey: tonWallet.publicKey,
-          balance: 0,
-          isActive: true,
-          isHot: true
-        });
-        
-        // Шифруем мнемонику
-        wallet.tonMnemonic = wallet.encryptMnemonic(tonWallet.mnemonic);
-        
-        // Генерируем QR-код
-        wallet.qrCodeUrl = wallet.generateQrCode();
-        
-        await wallet.save();
-      }
-      
-      // Привязываем кошелек к обмену
-      exchange.cryptoWallet = wallet._id;
-      
-      // Если исходная валюта TON, устанавливаем статус "ожидание подтверждения"
-      if (fromCurrency === 'TON') {
-        exchange.sourceTransaction = {
-          status: 'pending',
-          address: wallet.address
-        };
-      }
-      
-      // Если целевая валюта TON, подготавливаем транзакцию отправки
-      if (toCurrency === 'TON') {
-        exchange.destinationTransaction = {
-          status: 'pending',
-          address: req.body.tonAddress || wallet.address
-        };
-      }
-    }
-    
     await exchange.save();
-    
-    // Привязываем транзакцию к кошельку, если он существует
-    if (exchange.cryptoWallet) {
-      const wallet = await Wallet.findById(exchange.cryptoWallet);
-      if (wallet) {
-        if (!wallet.transactions) wallet.transactions = [];
-        wallet.transactions.push(exchange._id);
-        await wallet.save();
-      }
-    }
     
     // Отправляем email уведомление пользователю
     try {
       await emailService.sendExchangeInitiated(req.user.email, exchange);
     } catch (emailError) {
-      req.logger?.error(`Email notification error: ${emailError.message}`);
+      console.error(`Email notification error: ${emailError.message}`);
       // Не останавливаем выполнение если email не отправился
     }
     
@@ -253,96 +160,10 @@ router.post('/start', protect, async (req, res) => {
       data: exchange
     });
   } catch (error) {
-    req.logger.error(`Exchange start error: ${error.message}`);
+    console.error(`Exchange start error: ${error.message}`);
     res.status(500).json({
       success: false,
       message: 'Server error when starting exchange'
-    });
-  }
-});
-
-// Check TON payment status
-router.get('/check-payment/:id', protect, async (req, res) => {
-  try {
-    const exchange = await Exchange.findOne({
-      _id: req.params.id,
-      user: req.user.id
-    }).populate('cryptoWallet');
-    
-    if (!exchange) {
-      return res.status(404).json({
-        success: false,
-        message: 'Exchange not found'
-      });
-    }
-    
-    // Проверяем только транзакции с TON
-    if (exchange.fromCurrency === 'TON' && exchange.status === 'initiated') {
-      // Получаем адрес кошелька
-      const wallet = exchange.cryptoWallet;
-      
-      if (!wallet) {
-        return res.status(400).json({
-          success: false,
-          message: 'No wallet associated with this exchange'
-        });
-      }
-      
-      // Проверяем баланс
-      const balance = await checkTonBalance(wallet.address);
-      
-      // Обновляем баланс кошелька
-      wallet.balance = balance;
-      wallet.lastBalanceUpdate = Date.now();
-      await wallet.save();
-      
-      // Если баланс равен или больше суммы обмена, подтверждаем оплату
-      if (balance >= exchange.fromAmount) {
-        // Обновляем статус транзакции
-        exchange.sourceTransaction = {
-          ...exchange.sourceTransaction,
-          status: 'completed',
-          txId: 'AUTO_CONFIRMED_' + Date.now()
-        };
-        
-        exchange.status = 'processing';
-        await exchange.save();
-        
-        return res.json({
-          success: true,
-          message: 'Payment confirmed',
-          data: {
-            status: exchange.status,
-            balance
-          }
-        });
-      }
-      
-      // Если баланс недостаточен
-      return res.json({
-        success: true,
-        message: 'Waiting for payment',
-        data: {
-          status: 'waiting',
-          balance,
-          required: exchange.fromAmount
-        }
-      });
-    }
-    
-    // Для других валют или статусов
-    return res.json({
-      success: true,
-      message: 'No payment check needed',
-      data: {
-        status: exchange.status
-      }
-    });
-  } catch (error) {
-    req.logger.error(`Check payment error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      message: 'Server error when checking payment'
     });
   }
 });
@@ -373,7 +194,7 @@ router.put('/confirm-source/:id', protect, admin, async (req, res) => {
     try {
       await emailService.sendExchangeProcessing(exchange.user.email, exchange);
     } catch (emailError) {
-      req.logger?.error(`Email notification error: ${emailError.message}`);
+      console.error(`Email notification error: ${emailError.message}`);
       // Не останавливаем выполнение если email не отправился
     }
     
@@ -382,7 +203,7 @@ router.put('/confirm-source/:id', protect, admin, async (req, res) => {
       data: exchange
     });
   } catch (error) {
-    req.logger.error(`Confirm source error: ${error.message}`);
+    console.error(`Confirm source error: ${error.message}`);
     res.status(500).json({
       success: false,
       message: 'Server error when confirming source funds'
@@ -418,7 +239,7 @@ router.put('/complete/:id', protect, admin, async (req, res) => {
     try {
       await emailService.sendExchangeCompleted(exchange.user.email, exchange);
     } catch (emailError) {
-      req.logger?.error(`Email notification error: ${emailError.message}`);
+      console.error(`Email notification error: ${emailError.message}`);
       // Не останавливаем выполнение если email не отправился
     }
     
@@ -427,7 +248,7 @@ router.put('/complete/:id', protect, admin, async (req, res) => {
       data: exchange
     });
   } catch (error) {
-    req.logger.error(`Complete exchange error: ${error.message}`);
+    console.error(`Complete exchange error: ${error.message}`);
     res.status(500).json({
       success: false,
       message: 'Server error when completing exchange'
@@ -457,7 +278,7 @@ router.put('/admin-notes/:id', protect, admin, async (req, res) => {
       data: exchange
     });
   } catch (error) {
-    req.logger.error(`Update admin notes error: ${error.message}`);
+    console.error(`Update admin notes error: ${error.message}`);
     res.status(500).json({
       success: false,
       message: 'Server error when updating admin notes'
@@ -477,7 +298,7 @@ router.get('/my-exchanges', protect, async (req, res) => {
       data: exchanges
     });
   } catch (error) {
-    req.logger.error(`My exchanges error: ${error.message}`);
+    console.error(`My exchanges error: ${error.message}`);
     res.status(500).json({
       success: false,
       message: 'Server error when fetching exchanges'
@@ -514,7 +335,7 @@ router.get('/', protect, admin, async (req, res) => {
       data: exchanges
     });
   } catch (error) {
-    req.logger.error(`Get exchanges error: ${error.message}`);
+    console.error(`Get exchanges error: ${error.message}`);
     res.status(500).json({
       success: false,
       message: 'Server error when fetching exchanges'
@@ -573,7 +394,7 @@ router.post('/calculate', async (req, res) => {
       }
     });
   } catch (error) {
-    req.logger.error(`Calculate exchange error: ${error.message}`);
+    console.error(`Calculate exchange error: ${error.message}`);
     res.status(500).json({
       success: false,
       message: 'Server error when calculating exchange'
@@ -592,50 +413,6 @@ const testRates = [
     source: "manual",
     minAmount: 100,
     maxAmount: 50000,
-    isActive: true
-  },
-  {
-    sourceCurrency: "TRY",
-    targetCurrency: "TON",
-    baseRate: 0.01,
-    buyRate: 0.01,
-    sellRate: 0.009,
-    source: "manual",
-    minAmount: 100,
-    maxAmount: 50000,
-    isActive: true
-  },
-  {
-    sourceCurrency: "TON",
-    targetCurrency: "RUB",
-    baseRate: 240,
-    buyRate: 250,
-    sellRate: 230,
-    source: "manual",
-    minAmount: 0.1,
-    maxAmount: 100,
-    isActive: true
-  },
-  {
-    sourceCurrency: "TON",
-    targetCurrency: "TRY",
-    baseRate: 95,
-    buyRate: 100,
-    sellRate: 90,
-    source: "manual",
-    minAmount: 0.1,
-    maxAmount: 100,
-    isActive: true
-  },
-  {
-    sourceCurrency: "RUB",
-    targetCurrency: "TON",
-    baseRate: 0.0038,
-    buyRate: 0.004,
-    sellRate: 0.0035,
-    source: "manual",
-    minAmount: 1000,
-    maxAmount: 1000000,
     isActive: true
   },
   {
@@ -666,7 +443,7 @@ router.post('/init-test-rates', protect, admin, async (req, res) => {
       data: results
     });
   } catch (error) {
-    req.logger?.error(`Init test rates error: ${error.message}`);
+    console.error(`Init test rates error: ${error.message}`);
     res.status(500).json({
       success: false,
       message: 'Ошибка при добавлении тестовых курсов валют'
@@ -712,92 +489,6 @@ router.get('/ping', (req, res) => {
     success: true,
     timestamp: new Date().toISOString()
   });
-});
-
-// Создать ордер на покупку/продажу 
-router.post('/create-order', protect, async (req, res) => {
-  try {
-    const { symbol, side, orderType, qty, price } = req.body;
-    
-    // Проверяем обязательные параметры
-    if (!symbol || !side || !orderType || !qty) {
-      return res.status(400).json({
-        success: false,
-        message: 'Пожалуйста, укажите все необходимые параметры (symbol, side, orderType, qty)'
-      });
-    }
-    
-    // Создаем ордер через Bybit API
-    const order = await createOrder(symbol, side, orderType, qty, price);
-    
-    res.status(201).json({
-      success: true,
-      message: 'Ордер создан успешно',
-      data: order
-    });
-  } catch (error) {
-    req.logger?.error(`Create order error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      message: `Ошибка при создании ордера: ${error.message}`
-    });
-  }
-});
-
-// Получить баланс аккаунта
-router.get('/balance/:coin', protect, async (req, res) => {
-  try {
-    const { coin } = req.params;
-    
-    if (!coin) {
-      return res.status(400).json({
-        success: false,
-        message: 'Укажите валюту (coin)'
-      });
-    }
-    
-    // Получаем баланс через Bybit API
-    const balance = await getBalance(coin);
-    
-    res.json({
-      success: true,
-      data: balance
-    });
-  } catch (error) {
-    req.logger?.error(`Get balance error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      message: `Ошибка при получении баланса: ${error.message}`
-    });
-  }
-});
-
-// Получить текущий курс для пары
-router.get('/ticker/:symbol', async (req, res) => {
-  try {
-    const { symbol } = req.params;
-    
-    if (!symbol) {
-      return res.status(400).json({
-        success: false,
-        message: 'Укажите символ пары (symbol)'
-      });
-    }
-    
-    // Получаем курс через Bybit API
-    const ticker = await getTickerPrice(symbol);
-    
-    res.json({
-      success: true,
-      data: ticker
-    });
-  } catch (error) {
-    req.logger?.error(`Get ticker error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      message: `Ошибка при получении курса: ${error.message}`
-    });
-  }
 });
 
 // Get admin notifications (admin only)
@@ -857,31 +548,6 @@ router.get('/admin/notifications', protect, admin, async (req, res) => {
       });
     });
     
-    // 3. Неудачные обмены за последние 24 часа
-    const failedExchanges = await Exchange.find({
-      status: 'failed',
-      updatedAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } // 24 часа назад
-    }).populate('user', 'firstName lastName email');
-    
-    failedExchanges.forEach(exchange => {
-      notifications.push({
-        id: exchange._id + '_failed',
-        type: 'failed_exchange',
-        priority: 'low',
-        title: 'Неудачный обмен',
-        message: `Обмен завершился с ошибкой: ${exchange.fromCurrency} → ${exchange.toCurrency}`,
-        exchangeId: exchange._id,
-        userId: exchange.user._id,
-        createdAt: exchange.updatedAt,
-        data: {
-          amount: exchange.fromAmount,
-          fromCurrency: exchange.fromCurrency,
-          toCurrency: exchange.toCurrency,
-          userEmail: exchange.user.email
-        }
-      });
-    });
-    
     // Сортируем уведомления по приоритету и времени
     const priorityOrder = { high: 3, medium: 2, low: 1 };
     notifications.sort((a, b) => {
@@ -898,12 +564,12 @@ router.get('/admin/notifications', protect, admin, async (req, res) => {
       stats: {
         new: newExchanges.length,
         stuck: stuckExchanges.length,
-        failed: failedExchanges.length
+        failed: 0
       }
     });
     
   } catch (error) {
-    req.logger.error(`Get notifications error: ${error.message}`);
+    console.error(`Get notifications error: ${error.message}`);
     res.status(500).json({
       success: false,
       message: 'Server error when fetching notifications'
