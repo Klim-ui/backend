@@ -4,6 +4,8 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const { protect, admin } = require('../middleware/auth');
+// Импортируем сервис email уведомлений
+const emailService = require('../services/emailService');
 
 // Generate JWT Token
 const generateToken = (id) => {
@@ -412,6 +414,14 @@ router.put('/verify-kyc/:id', protect, admin, async (req, res) => {
     // Verify KYC
     user.kycVerified = true;
     await user.save();
+    
+    // Отправляем email уведомление пользователю
+    try {
+      await emailService.sendKycApproved(user.email, `${user.firstName} ${user.lastName}`);
+    } catch (emailError) {
+      req.logger?.error(`Email notification error: ${emailError.message}`);
+      // Не останавливаем выполнение если email не отправился
+    }
 
     res.json({
       success: true,
@@ -419,6 +429,113 @@ router.put('/verify-kyc/:id', protect, admin, async (req, res) => {
     });
   } catch (error) {
     req.logger?.error(`Verify KYC error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+    });
+  }
+});
+
+// @route   PUT /api/users/reject-kyc/:id
+// @desc    Reject user KYC
+// @access  Private/Admin
+router.put('/reject-kyc/:id', protect, admin, async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const user = await User.findById(req.params.id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    // Reject KYC
+    user.kycVerified = false;
+    user.kycRejectionReason = reason || 'KYC documents rejected by admin';
+    await user.save();
+    
+    // Отправляем email уведомление пользователю
+    try {
+      await emailService.sendKycRejected(user.email, `${user.firstName} ${user.lastName}`, user.kycRejectionReason);
+    } catch (emailError) {
+      req.logger?.error(`Email notification error: ${emailError.message}`);
+      // Не останавливаем выполнение если email не отправился
+    }
+
+    res.json({
+      success: true,
+      message: 'User KYC rejected',
+      reason: user.kycRejectionReason
+    });
+  } catch (error) {
+    req.logger?.error(`Reject KYC error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+    });
+  }
+});
+
+// @route   GET /api/users/kyc/:id
+// @desc    Get user KYC documents
+// @access  Private/Admin
+router.get('/kyc/:id', protect, admin, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    res.json({
+      success: true,
+      user: {
+        _id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        phoneNumber: user.phoneNumber,
+        kycVerified: user.kycVerified,
+        kycRejectionReason: user.kycRejectionReason,
+        kycDocuments: user.kycDocuments,
+        createdAt: user.createdAt
+      }
+    });
+  } catch (error) {
+    req.logger?.error(`Get user KYC error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+    });
+  }
+});
+
+// @route   GET /api/users/admin/kyc-pending
+// @desc    Get users with pending KYC verification
+// @access  Private/Admin
+router.get('/admin/kyc-pending', protect, admin, async (req, res) => {
+  try {
+    const users = await User.find({
+      kycDocuments: { $exists: true },
+      kycVerified: false,
+      $or: [
+        { kycRejectionReason: { $exists: false } },
+        { kycRejectionReason: null }
+      ]
+    }).select('firstName lastName email phoneNumber kycDocuments createdAt');
+
+    res.json({
+      success: true,
+      count: users.length,
+      data: users
+    });
+  } catch (error) {
+    req.logger?.error(`Get pending KYC error: ${error.message}`);
     res.status(500).json({
       success: false,
       message: 'Server error',

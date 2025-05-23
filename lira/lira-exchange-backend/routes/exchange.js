@@ -12,6 +12,8 @@ const { generateTonWallet, checkTonBalance, getTonTransactions } = require('../u
 const { createOrder, getBalance, getTickerPrice } = require('../utils/bybitUtils');
 // Импортируем сервис обновления курсов для использования кэша
 const rateUpdater = require('../services/rateUpdater');
+// Импортируем сервис email уведомлений
+const emailService = require('../services/emailService');
 
 // Middleware for checking authentication (to be implemented)
 const { protect, admin } = require('../middleware/auth');
@@ -238,6 +240,14 @@ router.post('/start', protect, async (req, res) => {
       }
     }
     
+    // Отправляем email уведомление пользователю
+    try {
+      await emailService.sendExchangeInitiated(req.user.email, exchange);
+    } catch (emailError) {
+      req.logger?.error(`Email notification error: ${emailError.message}`);
+      // Не останавливаем выполнение если email не отправился
+    }
+    
     res.status(201).json({
       success: true,
       data: exchange
@@ -340,7 +350,7 @@ router.get('/check-payment/:id', protect, async (req, res) => {
 // Confirm source funds received (admin only)
 router.put('/confirm-source/:id', protect, admin, async (req, res) => {
   try {
-    const exchange = await Exchange.findById(req.params.id);
+    const exchange = await Exchange.findById(req.params.id).populate('user', 'email firstName lastName');
     
     if (!exchange) {
       return res.status(404).json({
@@ -359,6 +369,14 @@ router.put('/confirm-source/:id', protect, admin, async (req, res) => {
     exchange.status = 'processing';
     await exchange.save();
     
+    // Отправляем email уведомление пользователю
+    try {
+      await emailService.sendExchangeProcessing(exchange.user.email, exchange);
+    } catch (emailError) {
+      req.logger?.error(`Email notification error: ${emailError.message}`);
+      // Не останавливаем выполнение если email не отправился
+    }
+    
     res.json({
       success: true,
       data: exchange
@@ -375,7 +393,7 @@ router.put('/confirm-source/:id', protect, admin, async (req, res) => {
 // Complete exchange (admin only)
 router.put('/complete/:id', protect, admin, async (req, res) => {
   try {
-    const exchange = await Exchange.findById(req.params.id);
+    const exchange = await Exchange.findById(req.params.id).populate('user', 'email firstName lastName');
     
     if (!exchange) {
       return res.status(404).json({
@@ -396,6 +414,14 @@ router.put('/complete/:id', protect, admin, async (req, res) => {
     exchange.completedAt = Date.now();
     await exchange.save();
     
+    // Отправляем email уведомление пользователю
+    try {
+      await emailService.sendExchangeCompleted(exchange.user.email, exchange);
+    } catch (emailError) {
+      req.logger?.error(`Email notification error: ${emailError.message}`);
+      // Не останавливаем выполнение если email не отправился
+    }
+    
     res.json({
       success: true,
       data: exchange
@@ -405,6 +431,36 @@ router.put('/complete/:id', protect, admin, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error when completing exchange'
+    });
+  }
+});
+
+// Update admin notes (admin only)
+router.put('/admin-notes/:id', protect, admin, async (req, res) => {
+  try {
+    const exchange = await Exchange.findById(req.params.id);
+    
+    if (!exchange) {
+      return res.status(404).json({
+        success: false,
+        message: 'Exchange not found'
+      });
+    }
+    
+    // Update admin notes
+    exchange.adminNotes = req.body.adminNotes || '';
+    await exchange.save();
+    
+    res.json({
+      success: true,
+      message: 'Admin notes updated successfully',
+      data: exchange
+    });
+  } catch (error) {
+    req.logger.error(`Update admin notes error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      message: 'Server error when updating admin notes'
     });
   }
 });
@@ -740,6 +796,117 @@ router.get('/ticker/:symbol', async (req, res) => {
     res.status(500).json({
       success: false,
       message: `Ошибка при получении курса: ${error.message}`
+    });
+  }
+});
+
+// Get admin notifications (admin only)
+router.get('/admin/notifications', protect, admin, async (req, res) => {
+  try {
+    // Получаем обмены, требующие внимания админа
+    const notifications = [];
+    
+    // 1. Новые обмены (инициированные более 5 минут назад)
+    const newExchanges = await Exchange.find({
+      status: 'initiated',
+      createdAt: { $lt: new Date(Date.now() - 5 * 60 * 1000) } // 5 минут назад
+    }).populate('user', 'firstName lastName email');
+    
+    newExchanges.forEach(exchange => {
+      notifications.push({
+        id: exchange._id,
+        type: 'new_exchange',
+        priority: 'high',
+        title: 'Новый обмен требует подтверждения',
+        message: `Обмен ${exchange.fromCurrency} → ${exchange.toCurrency} от ${exchange.user.firstName} ${exchange.user.lastName}`,
+        exchangeId: exchange._id,
+        userId: exchange.user._id,
+        createdAt: exchange.createdAt,
+        data: {
+          amount: exchange.fromAmount,
+          fromCurrency: exchange.fromCurrency,
+          toCurrency: exchange.toCurrency,
+          userEmail: exchange.user.email
+        }
+      });
+    });
+    
+    // 2. Обмены в статусе "в обработке" более 1 часа
+    const stuckExchanges = await Exchange.find({
+      status: 'processing',
+      updatedAt: { $lt: new Date(Date.now() - 60 * 60 * 1000) } // 1 час назад
+    }).populate('user', 'firstName lastName email');
+    
+    stuckExchanges.forEach(exchange => {
+      notifications.push({
+        id: exchange._id + '_stuck',
+        type: 'stuck_exchange',
+        priority: 'medium',
+        title: 'Обмен задерживается',
+        message: `Обмен в обработке уже ${Math.round((Date.now() - exchange.updatedAt) / (60 * 60 * 1000))} час(ов)`,
+        exchangeId: exchange._id,
+        userId: exchange.user._id,
+        createdAt: exchange.updatedAt,
+        data: {
+          amount: exchange.fromAmount,
+          fromCurrency: exchange.fromCurrency,
+          toCurrency: exchange.toCurrency,
+          userEmail: exchange.user.email,
+          hoursStuck: Math.round((Date.now() - exchange.updatedAt) / (60 * 60 * 1000))
+        }
+      });
+    });
+    
+    // 3. Неудачные обмены за последние 24 часа
+    const failedExchanges = await Exchange.find({
+      status: 'failed',
+      updatedAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } // 24 часа назад
+    }).populate('user', 'firstName lastName email');
+    
+    failedExchanges.forEach(exchange => {
+      notifications.push({
+        id: exchange._id + '_failed',
+        type: 'failed_exchange',
+        priority: 'low',
+        title: 'Неудачный обмен',
+        message: `Обмен завершился с ошибкой: ${exchange.fromCurrency} → ${exchange.toCurrency}`,
+        exchangeId: exchange._id,
+        userId: exchange.user._id,
+        createdAt: exchange.updatedAt,
+        data: {
+          amount: exchange.fromAmount,
+          fromCurrency: exchange.fromCurrency,
+          toCurrency: exchange.toCurrency,
+          userEmail: exchange.user.email
+        }
+      });
+    });
+    
+    // Сортируем уведомления по приоритету и времени
+    const priorityOrder = { high: 3, medium: 2, low: 1 };
+    notifications.sort((a, b) => {
+      if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
+        return priorityOrder[b.priority] - priorityOrder[a.priority];
+      }
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    });
+    
+    res.json({
+      success: true,
+      count: notifications.length,
+      data: notifications,
+      stats: {
+        new: newExchanges.length,
+        stuck: stuckExchanges.length,
+        failed: failedExchanges.length
+      }
+    });
+    
+  } catch (error) {
+    req.logger.error(`Get notifications error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      message: 'Server error when fetching notifications'
     });
   }
 });

@@ -40,11 +40,27 @@ const UserSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  kycRejectionReason: {
+    type: String,
+  },
   kycDocuments: {
     idCard: { type: String },
     address: { type: String },
     selfie: { type: String },
   },
+  // 2FA fields
+  twoFaEnabled: {
+    type: Boolean,
+    default: false,
+  },
+  twoFaSecret: {
+    type: String,
+    select: false,
+  },
+  twoFaBackupCodes: [{
+    code: { type: String },
+    used: { type: Boolean, default: false }
+  }],
   bankAccounts: [{
     country: { 
       type: String,

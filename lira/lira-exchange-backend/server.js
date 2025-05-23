@@ -119,10 +119,12 @@ app.get('/favicon.ico', (req, res) => {
 const exchangeRoutes = require('./routes/exchange');
 const userRoutes = require('./routes/users');
 const walletRoutes = require('./routes/wallets');
+const auth2faRoutes = require('./routes/auth2fa');
 
 app.use('/api/exchange', exchangeRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/wallets', walletRoutes);
+app.use('/api/auth/2fa', auth2faRoutes);
 
 // Закомментировал инициализацию TON-клиента
 // Initialize TON client

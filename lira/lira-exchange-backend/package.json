@@ -1,45 +1,40 @@
 {
-  "name": "lira-rub-exchange",
+  "name": "lira-exchange-backend",
   "version": "1.0.0",
-  "description": "Currency exchange application for TRY-RUB using TON",
+  "description": "Backend for Turkish Lira to Russian Ruble exchange platform",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "prestart": "npm install --no-fund --prefer-offline --legacy-peer-deps",
-    "dev": "nodemon server.js",
-    "client": "cd client && npm start",
-    "dev-full": "concurrently \"npm run dev\" \"npm run client\"",
-    "build": "npm install --legacy-peer-deps --omit=dev --force"
+    "dev": "nodemon server.js"
   },
   "dependencies": {
-    "@ton/core": "^0.60.1",
-    "@ton/crypto": "^3.2.0",
-    "@ton/ton": "^13.9.0",
-    "axios": "^1.3.3",
+    "@ton/crypto": "^0.17.0",
+    "@ton/ton": "^15.0.0",
+    "axios": "^1.7.8",
     "bcryptjs": "^2.4.3",
-    "bybit-api": "^4.1.7",
     "cors": "^2.8.5",
-    "dotenv": "^16.0.3",
-    "express": "^4.18.2",
-    "express-async-handler": "^1.2.0",
-    "ip-address": "10.0.1",
-    "jsonwebtoken": "^9.0.0",
-    "jssha": "2.4.2",
-    "mongoose": "^6.9.1",
-    "pg": "^8.16.0",
-    "qrcode": "^1.5.3",
-    "sequelize": "^6.37.7",
-    "smart-buffer": "3.0.0",
-    "socks": "2.6.2",
-    "ton": "12.3.0",
-    "ton-core": "0.47.1",
-    "ton-crypto": "3.2.0",
-    "ton-crypto-primitives": "2.0.0",
-    "winston": "^3.9.0",
-    "winston-daily-rotate-file": "^4.7.1"
+    "crypto": "^1.0.1",
+    "dotenv": "^16.4.7",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.5.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.8.3",
+    "morgan": "^1.10.0",
+    "nodemailer": "^6.9.8",
+    "qrcode": "^1.5.4",
+    "speakeasy": "^2.0.0",
+    "ton": "^13.11.1"
   },
   "devDependencies": {
-    "concurrently": "^7.6.0",
-    "nodemon": "^2.0.20"
-  }
+    "nodemon": "^3.1.7"
+  },
+  "keywords": [
+    "exchange",
+    "cryptocurrency",
+    "fiat",
+    "TRY",
+    "RUB"
+  ],
+  "author": "Lira Exchange Team",
+  "license": "MIT"
 }
