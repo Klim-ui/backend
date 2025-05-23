@@ -2,15 +2,44 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const dotenv = require('dotenv');
-// Импортируем наш новый логгер
-const logger = require('./config/logger');
-// Импортируем сервис обработки платежей
-const paymentProcessor = require('./services/paymentProcessor');
-// Импортируем сервис обновления курсов
-const rateUpdater = require('./services/rateUpdater');
 
-// Load environment variables
+// Load environment variables первым делом
 dotenv.config();
+
+// Импортируем модули с обработкой ошибок
+let logger, paymentProcessor, rateUpdater;
+
+try {
+  // Импортируем наш новый логгер
+  logger = require('./config/logger');
+  logger.info('Logger loaded successfully');
+} catch (error) {
+  console.error('Failed to load logger:', error.message);
+  // Fallback logger
+  logger = {
+    info: console.log,
+    error: console.error,
+    warn: console.warn
+  };
+}
+
+try {
+  // Импортируем сервис обработки платежей
+  paymentProcessor = require('./services/paymentProcessor');
+  logger.info('Payment processor loaded successfully');
+} catch (error) {
+  logger.error('Failed to load payment processor:', error.message);
+  paymentProcessor = { start: () => {}, stop: () => {} };
+}
+
+try {
+  // Импортируем сервис обновления курсов
+  rateUpdater = require('./services/rateUpdater');
+  logger.info('Rate updater loaded successfully');
+} catch (error) {
+  logger.error('Failed to load rate updater:', error.message);
+  rateUpdater = { start: () => {}, stop: () => {} };
+}
 
 // Initialize Express app
 const app = express();
@@ -86,6 +115,35 @@ app.get('/', (req, res) => {
   });
 });
 
+// Health check для Railway
+app.get('/health', (req, res) => {
+  const isDbConnected = mongoose.connection.readyState === 1;
+  
+  res.status(200).json({
+    status: 'ok',
+    database: isDbConnected ? 'connected' : 'disconnected',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// API Health check
+app.get('/api/health', (req, res) => {
+  const isDbConnected = mongoose.connection.readyState === 1;
+  
+  res.status(isDbConnected ? 200 : 503).json({
+    success: true,
+    status: isDbConnected ? 'healthy' : 'unhealthy',
+    database: isDbConnected ? 'connected' : 'disconnected',
+    timestamp: new Date().toISOString(),
+    services: {
+      database: isDbConnected,
+      api: true
+    }
+  });
+});
+
 // Маршрут для проверки статуса сервера и ресурсов
 app.get('/status', (req, res) => {
   const memoryUsage = process.memoryUsage();
@@ -113,18 +171,38 @@ app.get('/favicon.ico', (req, res) => {
   res.status(204).end(); // Отправляем "No Content"
 });
 
-// Логгер импортирован из ./config/logger.js
+// Routes с обработкой ошибок
+try {
+  const exchangeRoutes = require('./routes/exchange');
+  app.use('/api/exchange', exchangeRoutes);
+  logger.info('Exchange routes loaded successfully');
+} catch (error) {
+  logger.error('Failed to load exchange routes:', error.message);
+}
 
-// Routes
-const exchangeRoutes = require('./routes/exchange');
-const userRoutes = require('./routes/users');
-const walletRoutes = require('./routes/wallets');
-const auth2faRoutes = require('./routes/auth2fa');
+try {
+  const userRoutes = require('./routes/users');
+  app.use('/api/users', userRoutes);
+  logger.info('User routes loaded successfully');
+} catch (error) {
+  logger.error('Failed to load user routes:', error.message);
+}
 
-app.use('/api/exchange', exchangeRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/wallets', walletRoutes);
-app.use('/api/auth/2fa', auth2faRoutes);
+try {
+  const walletRoutes = require('./routes/wallets');
+  app.use('/api/wallets', walletRoutes);
+  logger.info('Wallet routes loaded successfully');
+} catch (error) {
+  logger.error('Failed to load wallet routes:', error.message);
+}
+
+try {
+  const auth2faRoutes = require('./routes/auth2fa');
+  app.use('/api/auth/2fa', auth2faRoutes);
+  logger.info('2FA routes loaded successfully');
+} catch (error) {
+  logger.error('Failed to load 2FA routes:', error.message);
+}
 
 // Закомментировал инициализацию TON-клиента
 // Initialize TON client
@@ -148,7 +226,12 @@ app.use((err, req, res, next) => {
 });
 
 // Connect to MongoDB
-logger.info('Trying to connect to MongoDB with URL:', process.env.MONGO_URL);
+logger.info('Trying to connect to MongoDB...');
+
+// Поддерживаем разные варианты переменных окружения
+const mongoUrl = process.env.MONGODB_URI || process.env.MONGO_URL || 'mongodb://localhost:27017/lira-rub-exchange';
+logger.info('MongoDB URL configured:', mongoUrl.replace(/\/\/.*@/, '//<credentials>@')); // Скрываем пароль в логах
+
 mongoose.set('strictQuery', false); // Добавляем, чтобы убрать предупреждение
 
 // Добавляем обработчики событий для соединения с MongoDB
@@ -165,28 +248,36 @@ mongoose.connection.on('disconnected', () => {
 });
 
 // Используем вариант с коллбэком для проверки подключения
-mongoose.connect(process.env.MONGO_URL || 'mongodb://localhost:27017/lira-rub-exchange', {
+mongoose.connect(mongoUrl, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
-  serverSelectionTimeoutMS: 5000, // Таймаут в 5 секунд
+  serverSelectionTimeoutMS: 10000, // Увеличиваем таймаут для Railway
   socketTimeoutMS: 45000, // Таймаут сокета в 45 секунд
   maxPoolSize: 10 // Ограничиваем размер пула соединений
 })
   .then(() => {
-    logger.info('MongoDB connected');
+    logger.info('MongoDB connected successfully');
     
-    // Запускаем сервис обработки платежей
+    // Запускаем сервис обработки платежей только если MongoDB подключен
     if (process.env.ENABLE_PAYMENT_PROCESSOR !== 'false') {
       logger.info('Starting payment processor service');
-      paymentProcessor.start();
+      try {
+        paymentProcessor.start();
+      } catch (error) {
+        logger.error('Failed to start payment processor:', error.message);
+      }
     } else {
       logger.info('Payment processor disabled via environment variable');
     }
     
-    // Запускаем сервис обновления курсов
+    // Запускаем сервис обновления курсов только если MongoDB подключен
     if (process.env.ENABLE_RATE_UPDATER !== 'false') {
       logger.info('Starting rate updater service');
-      rateUpdater.start();
+      try {
+        rateUpdater.start();
+      } catch (error) {
+        logger.error('Failed to start rate updater:', error.message);
+      }
     } else {
       logger.info('Rate updater disabled via environment variable');
     }
@@ -195,11 +286,22 @@ mongoose.connect(process.env.MONGO_URL || 'mongodb://localhost:27017/lira-rub-ex
     const PORT = process.env.PORT || 8080; // Railway обычно использует порт 8080
     app.listen(PORT, '0.0.0.0', () => { // Слушаем на всех интерфейсах
       logger.info(`Server running on port ${PORT}`);
+      logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
     });
   })
   .catch((err) => {
-    logger.error('MongoDB connection error:', err);
-    process.exit(1);
+    logger.error('Failed to connect to MongoDB:', err.message);
+    
+    // В production всё равно запускаем сервер для health checks
+    if (process.env.NODE_ENV === 'production') {
+      logger.warn('Starting server without MongoDB in production mode');
+      const PORT = process.env.PORT || 8080;
+      app.listen(PORT, '0.0.0.0', () => {
+        logger.info(`Server running on port ${PORT} (MongoDB connection failed)`);
+      });
+    } else {
+      process.exit(1);
+    }
   });
 
 // Планировщик проверки использования памяти
