@@ -6,6 +6,9 @@ const rateLimit = require('express-rate-limit');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Trust proxy for Railway and other cloud providers
+app.set('trust proxy', 1);
+
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -45,13 +48,87 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Mock exchange rate
+// Mock exchange rate (оба пути для совместимости)
 app.get('/api/rates', (req, res) => {
   res.json({
     TRY_RUB: {
       rate: 3.42,
       timestamp: new Date().toISOString(),
       source: 'mock'
+    }
+  });
+});
+
+app.get('/api/exchange/rates', (req, res) => {
+  res.json({
+    TRY_RUB: {
+      rate: 3.42,
+      timestamp: new Date().toISOString(),
+      source: 'mock'
+    }
+  });
+});
+
+// Mock user authentication routes
+app.post('/api/users/login', (req, res) => {
+  const { email, password } = req.body;
+  
+  // Mock успешный логин для тестирования
+  if (email && password) {
+    res.json({
+      success: true,
+      message: 'Login successful',
+      user: {
+        id: 1,
+        email: email,
+        name: 'Test User',
+        role: 'user'
+      },
+      token: 'mock-jwt-token-12345'
+    });
+  } else {
+    res.status(400).json({
+      success: false,
+      message: 'Email and password are required'
+    });
+  }
+});
+
+app.post('/api/users/register', (req, res) => {
+  const { email, password, name } = req.body;
+  
+  if (email && password && name) {
+    res.json({
+      success: true,
+      message: 'Registration successful',
+      user: {
+        id: 2,
+        email: email,
+        name: name,
+        role: 'user'
+      }
+    });
+  } else {
+    res.status(400).json({
+      success: false,
+      message: 'Email, password and name are required'
+    });
+  }
+});
+
+// Mock user profile
+app.get('/api/users/profile', (req, res) => {
+  res.json({
+    success: true,
+    user: {
+      id: 1,
+      email: 'test@example.com',
+      name: 'Test User',
+      role: 'user',
+      balance: {
+        TRY: 1000,
+        RUB: 3420
+      }
     }
   });
 });
