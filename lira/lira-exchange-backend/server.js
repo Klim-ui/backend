@@ -170,8 +170,11 @@ app.post('/api/users/register', async (req, res) => {
 app.post('/api/users/login', async (req, res) => {
   try {
     const { email, password } = req.body;
+    
+    console.log('🔐 Login attempt:', { email, hasPassword: !!password });
 
     if (!email || !password) {
+      console.log('❌ Missing email or password');
       return res.status(400).json({
         success: false,
         message: 'Email and password are required'
@@ -179,6 +182,7 @@ app.post('/api/users/login', async (req, res) => {
     }
 
     if (!users) {
+      console.log('❌ Database unavailable');
       return res.status(503).json({
         success: false,
         message: 'Database unavailable'
@@ -186,17 +190,26 @@ app.post('/api/users/login', async (req, res) => {
     }
 
     // Find user
+    console.log('🔍 Looking for user:', email);
     const user = await users.findOne({ email });
+    
     if (!user) {
+      console.log('❌ User not found:', email);
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
       });
     }
+    
+    console.log('✅ User found:', { id: user._id, email: user.email, hasPassword: !!user.password });
 
     // Check password
+    console.log('🔑 Checking password...');
     const isValidPassword = await bcrypt.compare(password, user.password);
+    console.log('🔑 Password check result:', isValidPassword);
+    
     if (!isValidPassword) {
+      console.log('❌ Invalid password for user:', email);
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
@@ -204,12 +217,14 @@ app.post('/api/users/login', async (req, res) => {
     }
 
     // Generate JWT
+    console.log('🎫 Generating JWT token...');
     const token = jwt.sign(
       { userId: user._id, email: user.email, role: user.role },
       process.env.JWT_SECRET || 'fallback-secret',
       { expiresIn: '7d' }
     );
 
+    console.log('✅ Login successful for:', email);
     res.json({
       success: true,
       message: 'Login successful',
@@ -224,7 +239,7 @@ app.post('/api/users/login', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Login error:', error);
+    console.error('💥 Login error:', error);
     res.status(500).json({
       success: false,
       message: 'Login failed'
@@ -293,6 +308,35 @@ app.get('/api/exchange/rates', (req, res) => {
       source: 'mock'
     }
   });
+});
+
+// Debug route - remove in production
+app.get('/api/debug/users', async (req, res) => {
+  try {
+    if (!users) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database unavailable'
+      });
+    }
+
+    const allUsers = await users.find({}, { 
+      projection: { password: 0 } // Don't show passwords
+    }).toArray();
+
+    res.json({
+      success: true,
+      count: allUsers.length,
+      users: allUsers
+    });
+
+  } catch (error) {
+    console.error('Debug users error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch users'
+    });
+  }
 });
 
 // Error handling
