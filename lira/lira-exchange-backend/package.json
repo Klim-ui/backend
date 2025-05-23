@@ -20,11 +20,20 @@
     "morgan": "^1.10.0",
     "nodemailer": "^6.9.8",
     "qrcode": "^1.5.4",
+    "smart-buffer": "^4.2.0",
     "socks": "^2.7.1",
     "speakeasy": "^2.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.7"
+  },
+  "resolutions": {
+    "smart-buffer": "^4.2.0",
+    "socks": "^2.7.1"
+  },
+  "overrides": {
+    "smart-buffer": "^4.2.0",
+    "socks": "^2.7.1"
   },
   "keywords": [
     "exchange",
@@ -33,6 +42,6 @@
     "TRY",
     "RUB"
   ],
-  "author": "Lira Exchange Team",
+  "author": "LIRA Exchange Team",
   "license": "MIT"
 }

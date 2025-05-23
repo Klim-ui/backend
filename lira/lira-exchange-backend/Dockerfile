@@ -7,10 +7,12 @@ WORKDIR /app
 COPY package*.json ./
 COPY .npmrc ./
 
-# Очищаем npm кеш и устанавливаем зависимости
+# Полностью очищаем npm кеш и устанавливаем зависимости
 RUN npm cache clean --force && \
     rm -rf node_modules && \
-    npm install --legacy-peer-deps --no-audit --no-fund
+    rm -rf package-lock.json && \
+    npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline=false && \
+    npm ls || true
 
 # Копируем исходный код
 COPY . .
